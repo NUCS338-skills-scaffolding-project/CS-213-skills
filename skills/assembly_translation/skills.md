@@ -1,38 +1,67 @@
 ---
-skill_id: "skill-name"
-name: "Human Readable Skill Name"
+skill_id: "assembly_translation"
+name: "Assembly Translation (x86-64)"
 skill_type: "code"
-tags: ["topic1", "topic2"]
+tags: ["assembly", "x86-64", "translation", "reverse-engineering", "cs213"]
 python_entry: "logic.py"
 ---
 
-# Skill Name
+# Assembly Translation (x86-64)
 
 ## Description
 
-What does this skill do? Keep it to 2-3 sentences.
+Translates small x86-64 assembly snippets into readable, C-like pseudocode and a per-line explanation. Designed for intro systems workflows: mapping registers to variables, understanding `lea`, and interpreting arithmetic and memory operands.
 
 ## When to Trigger
 
-- Trigger condition 1
-- Trigger condition 2
+- Student asks “what does this assembly do?”
+- Student needs to map `mov/add/sub/lea/cmp/test/j*` into C-like logic
+- Student is confused by AT&T vs Intel syntax or addressing modes like `-0x8(%rbp)`
 
 ## Inputs
 
-Describe what inputs the function expects.
+`run(input: dict) -> dict`
+
+Required keys:
+- `asm` (str): multi-line assembly text
+
+Optional keys:
+- `syntax` (str): `"att" | "intel" | "auto"` (default `"auto"`)
+- `include_pseudocode` (bool): include pseudocode summary (default `True`)
+- `max_instructions` (int): cap parsed instructions (default `200`)
 
 ## Outputs
 
-Describe what the function returns.
+A dict:
+- `ok` (bool)
+- `syntax` (str): detected/used syntax
+- `instructions` (list[dict]): normalized instruction records
+- `line_map` (list[dict]): per input line: parsed instruction + explanation
+- `pseudocode` (str): C-like pseudocode (if requested)
+- `assumptions` (list[str])
+- `warnings` (list[str])
+- `errors` (list[str])
 
 ## Usage
 
 ```python
 from logic import run
-result = run({"key": "value"})
-print(result)
+
+asm = """
+push rbp
+mov rbp, rsp
+sub rsp, 16
+mov DWORD PTR [rbp-4], edi
+lea eax, [edi+edi*2]
+add eax, 7
+"""
+
+out = run({"asm": asm, "syntax": "intel"})
+print(out["pseudocode"])
+print(out["warnings"])
 ```
 
 ## Notes
 
-Any additional notes for teams importing this skill.
+- **Scope**: heuristic translation for *small teaching snippets*; not a decompiler.
+- **Edge cases**: mixed syntax, implicit operand sizes, flags-based branches (`jle`, `jne`) without full CFG, and unknown memory types (byte/word/dword/qword) may produce warnings.

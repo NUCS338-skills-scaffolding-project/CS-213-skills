@@ -1,38 +1,60 @@
 ---
-skill_id: "skill-name"
-name: "Human Readable Skill Name"
+skill_id: "c_debugging"
+name: "C Debugging Triage"
 skill_type: "code"
-tags: ["topic1", "topic2"]
+tags: ["c", "debugging", "segfault", "undefined-behavior", "memory", "cs213"]
 python_entry: "logic.py"
 ---
 
-# Skill Name
+# C Debugging Triage
 
 ## Description
 
-What does this skill do? Keep it to 2-3 sentences.
+Analyzes a C snippet plus symptoms (compiler errors, runtime messages, or observed behavior) and returns likely root causes with concrete next debugging steps. Tailored for intro systems patterns like segfaults, pointer mistakes, memory leaks, and UB.
 
 ## When to Trigger
 
-- Trigger condition 1
-- Trigger condition 2
+- Student reports segfault / bus error / “it crashes”
+- Student shares C code + confusing compiler warnings/errors
+- Student sees wrong output and suspects pointer/array arithmetic bugs
 
 ## Inputs
 
-Describe what inputs the function expects.
+`run(input: dict) -> dict`
+
+Optional keys (best results with more context):
+- `c_code` (str): C code or excerpt
+- `compiler_output` (str): gcc/clang warnings/errors
+- `runtime_output` (str): program output / crash message
+- `symptoms` (list[str] | str): brief description (“segfault at line…”, “valgrind invalid read…”)
+- `constraints` (dict): e.g. `{"tools_allowed": ["gdb", "valgrind", "asan"]}`
 
 ## Outputs
 
-Describe what the function returns.
+A dict:
+- `ok` (bool)
+- `likely_root_causes` (list[dict]): ranked hypotheses:
+  - `title` (str), `confidence` (0..1), `evidence` (list[str]), `what_to_check` (list[str])
+- `questions_to_ask` (list[str])
+- `next_steps` (list[str]): actionable commands or edits to try
+- `warnings` (list[str])
+- `errors` (list[str])
 
 ## Usage
 
 ```python
 from logic import run
-result = run({"key": "value"})
-print(result)
+
+out = run({
+  "c_code": "int *p = NULL; *p = 3;",
+  "symptoms": "segmentation fault",
+  "constraints": {"tools_allowed": ["gdb", "asan"]},
+})
+print(out["likely_root_causes"][0]["title"])
+print(out["next_steps"][:3])
 ```
 
 ## Notes
 
-Any additional notes for teams importing this skill.
+- This is a **triage assistant**, not a full static analyzer. It uses pattern matching and common CS-213 failure modes to generate hypotheses.
+- Edge cases: multi-file builds, optimizer effects, concurrency bugs.
