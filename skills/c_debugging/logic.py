@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 
 def _as_text(x: Any) -> str:
@@ -25,10 +25,6 @@ def _contains_any(text: str, needles: List[str]) -> bool:
     return any(n.lower() in t for n in needles)
 
 
-def _findall_regex(text: str, pattern: str) -> List[str]:
-    return re.findall(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
-
-
 def _make_hypothesis(title: str, confidence: float, evidence: List[str], what_to_check: List[str]) -> Dict[str, Any]:
     confidence = max(0.0, min(1.0, float(confidence)))
     return {
@@ -48,7 +44,7 @@ def _format_message(
     errors: List[str],
 ) -> str:
     if errors:
-        lines = ["## Debugging result", "", "**Status**: Not enough information.", ""]
+        lines = ["## Debugging result", "", "**Status**: I’m missing a bit of info to narrow this down.", ""]
         lines.append("### What I need from you")
         for e in errors:
             lines.append(f"- {e}")
@@ -57,7 +53,7 @@ def _format_message(
                 lines.append(f"- {q}")
         return "\n".join(lines).rstrip() + "\n"
 
-    lines: List[str] = ["## Debugging result", "", "**Top guess**:"]
+    lines: List[str] = ["## Debugging result", "", "**Best guess (based on what you shared)**:"]
     if likely_root_causes:
         top = likely_root_causes[0]
         conf = top.get("confidence")
@@ -74,21 +70,21 @@ def _format_message(
         checks = top.get("what_to_check") or []
         if checks:
             lines.append("")
-            lines.append("### What to check next (fast)")
+            lines.append("### Quick things to check next")
             for item in checks[:4]:
                 lines.append(f"- {item}")
     else:
-        lines.append("- (No strong match found — I can still suggest a debug plan below.)")
+        lines.append("- (Nothing clearly matches yet — but we can still debug this systematically.)")
 
     if next_steps:
         lines.append("")
-        lines.append("### Suggested next steps (commands / actions)")
+        lines.append("### Good next steps to try")
         for i, step in enumerate(next_steps[:6], start=1):
             lines.append(f"{i}. {step}")
 
     if questions_to_ask:
         lines.append("")
-        lines.append("### Quick questions (to narrow it down)")
+        lines.append("### A couple quick questions (to narrow it down)")
         for q in questions_to_ask[:5]:
             lines.append(f"- {q}")
 
@@ -126,13 +122,13 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "ok": False,
             "likely_root_causes": [],
-            "questions_to_ask": ["Can you paste the C code and the exact compiler/runtime output?"],
+            "questions_to_ask": ["Can you paste the C code and the exact compiler/runtime output (copy/paste is perfect)?"],
             "next_steps": [],
             "warnings": [],
             "errors": ["No input context provided (expected at least one of c_code/compiler_output/runtime_output/symptoms)."],
             "message": _format_message(
                 likely_root_causes=[],
-                questions_to_ask=["Can you paste the C code and the exact compiler/runtime output?"],
+                questions_to_ask=["Can you paste the C code and the exact compiler/runtime output (copy/paste is perfect)?"],
                 next_steps=[],
                 warnings=[],
                 errors=["No input context provided (expected at least one of c_code/compiler_output/runtime_output/symptoms)."],
@@ -181,7 +177,10 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
                     "NULL pointer dereference",
                     0.8,
                     evidence + ["Code contains NULL and a dereference pattern."],
-                    ["Check pointer is initialized (malloc/stack address) before dereference", "Add guard: if (p == NULL) ..."],
+                    [
+                        "Before any dereference, confirm the pointer has been assigned a valid address (from `malloc`, or the address of an in-scope object).",
+                        "If NULL is a possible state, decide what behavior should happen in that case (return an error, skip work, etc.).",
+                    ],
                 )
             )
         else:
@@ -190,7 +189,11 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
                     "Invalid pointer dereference (null/uninitialized/out-of-bounds)",
                     0.65,
                     evidence,
-                    ["Check the line that crashes in gdb backtrace", "Inspect pointer values before dereference", "Look for out-of-bounds array indexing."],
+                    [
+                        "Use a backtrace to identify the call path leading to the crash (don’t jump to conclusions from one frame).",
+                        "Right before the crash, inspect the *values* of pointers/indices involved in the dereference (are they NULL? uninitialized? out of range?).",
+                        "If arrays are involved, sanity-check index bounds and the allocated length/capacity.",
+                    ],
                 )
             )
 
@@ -270,23 +273,23 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
     # Next steps: adapt to allowed tools.
     next_steps: List[str] = []
     if "asan" in tools_allowed:
-        next_steps.append("Recompile with AddressSanitizer: `-fsanitize=address -fno-omit-frame-pointer -g` and rerun.")
+        next_steps.append("Recompile with AddressSanitizer: add `-fsanitize=address -fno-omit-frame-pointer -g`, then rerun.")
     if "ubsan" in tools_allowed:
-        next_steps.append("Recompile with UBSan: `-fsanitize=undefined -g` and rerun.")
+        next_steps.append("Recompile with UBSan: add `-fsanitize=undefined -g`, then rerun.")
     if "valgrind" in tools_allowed:
         next_steps.append("Run Valgrind: `valgrind --leak-check=full --track-origins=yes ./a.out` (or your binary).")
     if "gdb" in tools_allowed:
         next_steps.extend(
             [
-                "Run gdb: `gdb --args ./your_program ...` then `run`.",
-                "At crash: `bt` (backtrace), `frame 0`, `info locals`, `print ptr` for suspicious pointers.",
+                "Start gdb: `gdb --args ./your_program ...` then type `run`.",
+                "If it crashes: run `bt` to see *where you are* in the call stack, then inspect locals/arguments in the current frame (e.g., `info locals`, `print ptr`, `print i`).",
             ]
         )
     # Always useful regardless of tools.
     next_steps.extend(
         [
-            "Turn on warnings: compile with `-Wall -Wextra -Werror -g` and fix warnings first.",
-            "If segfault: identify the first bad dereference (array index, pointer, struct field) and print/inspect values right before it.",
+            "Turn warnings on: compile with `-Wall -Wextra -g` and treat warnings as *leads* (they often correlate with the underlying issue).",
+            "If it’s a segfault: focus on the dereference/indexing operation that *uses* a bad value; verify the pointer/index is valid immediately before it’s used.",
         ]
     )
 

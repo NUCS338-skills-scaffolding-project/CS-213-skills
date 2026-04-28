@@ -1,2 +1,3 @@
-# skill-standard-template
-Standard template for all the skill repos
+# CS-213-skills
+
+Course skill definitions live under `skills/`. Optional **Gemini chat UI**: see `chatbot/README.md`.

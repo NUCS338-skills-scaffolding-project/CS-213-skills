@@ -1,19 +1,12 @@
+"""Stack slots from rsp/rbp + qword memory (snapshot only)."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-
-MASK64 = (1 << 64) - 1
-
-
-def _as_int(x: Any) -> Optional[int]:
-    try:
-        return int(x)
-    except Exception:
-        return None
+MASK = (1 << 64) - 1
 
 
-def _guess_label(addr: int, rbp: Optional[int]) -> Optional[str]:
+def _guess(addr: int, rbp: Optional[int]) -> Optional[str]:
     if rbp is None:
         return None
     if addr == rbp:
@@ -21,99 +14,108 @@ def _guess_label(addr: int, rbp: Optional[int]) -> Optional[str]:
     if addr == rbp + 8:
         return "return_address"
     if addr < rbp:
-        off = addr - rbp
-        return f"local[{off}]"
-    if addr > rbp + 8:
-        off = addr - rbp
-        return f"caller[{off}]"
+        return f"local[{addr - rbp}]"
     return None
 
 
-def run(input: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Create a simple stack visualization from registers + a qword memory map.
+def _hex(v: int) -> str:
+    return hex(int(v) & MASK)
 
-    Expected input keys:
-      - regs: dict with at least rsp (rbp recommended)
-      - mem: dict[int,int] mapping address->qword (optional)
-      - word_size: slot size in bytes (default 8)
-      - max_slots: cap number of slots returned (default 64)
-      - label_hints: dict[int,str] explicit labels (optional)
-    """
-    regs = (input or {}).get("regs")
+
+def _stack_table_md(frame: Dict[str, Any], slots: List[Dict[str, Any]]) -> str:
+    rsp = frame.get("rsp")
+    rbp = frame.get("rbp")
+    rows: List[str] = [
+        "| addr | rbp_off | label | value |",
+        "| --- | --- | --- | --- |",
+    ]
+    for sl in slots[:32]:
+        addr = sl.get("addr")
+        off = sl.get("offset_from_rbp")
+        lab = sl.get("label") or ""
+        val = sl.get("value")
+        addr_s = _hex(addr) if isinstance(addr, int) else str(addr)
+        off_s = str(off) if off is not None else ""
+        val_s = _hex(val) if isinstance(val, int) else ""
+
+        # Small marker for rsp/rbp rows so the tutor can point at them.
+        if isinstance(addr, int) and isinstance(rsp, int) and addr == rsp:
+            lab = (lab + " " if lab else "") + "<- rsp"
+        if isinstance(addr, int) and isinstance(rbp, int) and addr == rbp:
+            lab = (lab + " " if lab else "") + "<- rbp"
+
+        rows.append(f"| {addr_s} | {off_s} | {str(lab).replace('|','\\\\|')} | {val_s} |")
+    if len(slots) > 32:
+        rows.append(f"\n… ({len(slots) - 32} more slots not shown) …")
+    return "\n".join(rows)
+
+
+def run(inp: Dict[str, Any]) -> Dict[str, Any]:
+    inp = inp or {}
+    regs = inp.get("regs")
     if not isinstance(regs, dict):
-        return {"ok": False, "frame": {}, "slots": [], "warnings": [], "errors": ["Missing required dict input['regs']."]}
+        return {"ok": False, "frame": {}, "slots": [], "errors": ["Need input['regs'] (dict with at least rsp)."]}
 
-    rsp = _as_int(regs.get("rsp"))
-    rbp = _as_int(regs.get("rbp")) if "rbp" in regs else None
-    if rsp is None:
-        return {"ok": False, "frame": {}, "slots": [], "warnings": [], "errors": ["regs must include integer 'rsp'."]}
+    rsp = regs.get("rsp")
+    try:
+        rsp = int(rsp) & MASK
+    except Exception:
+        return {"ok": False, "frame": {}, "slots": [], "errors": ["regs['rsp'] must be an integer."]}
 
-    mem_in = (input or {}).get("mem", {}) or {}
-    if not isinstance(mem_in, dict):
-        mem_in = {}
-    mem: Dict[int, int] = {int(k) & MASK64: int(v) & MASK64 for k, v in mem_in.items()}
+    rbp = regs.get("rbp")
+    try:
+        rbp_i = int(rbp) & MASK if rbp is not None else None
+    except Exception:
+        rbp_i = None
 
-    word_size = int((input or {}).get("word_size", 8))
-    if word_size not in (1, 2, 4, 8, 16):
-        word_size = 8
-    max_slots = int((input or {}).get("max_slots", 64))
-    if max_slots <= 0:
-        max_slots = 64
-    label_hints = (input or {}).get("label_hints", {}) or {}
-    if not isinstance(label_hints, dict):
-        label_hints = {}
+    mem_in = inp.get("mem") or {}
+    mem = {}
+    if isinstance(mem_in, dict):
+        for k, v in mem_in.items():
+            try:
+                mem[int(k) & MASK] = int(v) & MASK
+            except Exception:
+                pass
 
+    ws = int(inp.get("word_size", 8) or 8)
+    if ws not in (1, 2, 4, 8):
+        ws = 8
+    max_slots = min(int(inp.get("max_slots", 32) or 32), 64)
+    hints = inp.get("label_hints") or {}
+    if not isinstance(hints, dict):
+        hints = {}
+
+    use_rbp = rbp_i is not None and rbp_i != 0 and rbp_i >= rsp
+    hi = (rbp_i + 16) & MASK if use_rbp else (rsp + (max_slots - 1) * ws) & MASK
+    rbp_off = rbp_i if use_rbp else None
     warnings: List[str] = []
-    errors: List[str] = []
+    if not use_rbp:
+        warnings.append("Using rsp-only window (rbp missing or not above rsp).")
 
-    # Determine window bounds.
-    # If rbp looks valid and above rsp, show rsp..rbp+16 (saved rbp + retaddr) window.
-    # Otherwise, show a small window above rsp.
-    rbp_valid = rbp is not None and rbp != 0 and rbp >= rsp and (rbp - rsp) <= (max_slots * word_size)
-    if not rbp_valid:
-        if rbp is None or rbp == 0:
-            warnings.append("rbp missing/zero; showing stack window relative to rsp only.")
-        else:
-            warnings.append("rbp not within expected range above rsp; showing stack window relative to rsp only.")
-        lo = rsp
-        hi = (rsp + (max_slots - 1) * word_size) & MASK64
-        rbp_for_offsets: Optional[int] = None
-    else:
-        lo = rsp
-        hi = rbp + 16
-        rbp_for_offsets = rbp
-
-    # Build slots at word_size increments.
     slots: List[Dict[str, Any]] = []
-    addr = lo
-    count = 0
-    while True:
-        if count >= max_slots:
-            warnings.append(f"Slot output capped at max_slots={max_slots}.")
+    addr = rsp
+    for _ in range(max_slots):
+        if use_rbp and addr > hi:
             break
-        if (rbp_valid and addr > hi) or (not rbp_valid and count >= max_slots):
-            break
-
-        value = mem.get(addr)
-        label = label_hints.get(addr)
-        if label is None:
-            label = _guess_label(addr, rbp_for_offsets)
-
-        offset_from_rbp = (addr - rbp_for_offsets) if rbp_for_offsets is not None else None
+        lab = hints.get(addr) or _guess(addr, rbp_off)
         slots.append(
             {
                 "addr": addr,
-                "offset_from_rbp": offset_from_rbp,
-                "value": value,
-                "label": label,
+                "offset_from_rbp": (addr - rbp_off) if rbp_off is not None else None,
+                "value": mem.get(addr),
+                "label": lab,
             }
         )
-
-        addr = (addr + word_size) & MASK64
-        count += 1
-        if rbp_valid and addr > hi:
+        addr = (addr + ws) & MASK
+        if not use_rbp and len(slots) >= max_slots:
             break
 
-    frame = {"rsp": rsp, "rbp": rbp, "word_size": word_size, "lo": lo, "hi": hi}
-    return {"ok": len(errors) == 0, "frame": frame, "slots": slots, "warnings": warnings, "errors": errors}
+    frame = {"rsp": rsp, "rbp": rbp_i, "word_size": ws}
+    return {
+        "ok": True,
+        "frame": frame,
+        "slots": slots,
+        "table_md": _stack_table_md(frame, slots),
+        "warnings": warnings,
+        "errors": [],
+    }

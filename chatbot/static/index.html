@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CS-213 Chat</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #fbf4ff;
+      --surface: #ffffff;
+      --surface-2: #f8fafc;
+      --border: rgba(15, 23, 42, 0.12);
+      --text: #0f172a;
+      --muted: rgba(15, 23, 42, 0.65);
+      --accent: #a21caf;
+      --danger: #b91c1c;
+      --ok: #a21caf;
+      --radius: 14px;
+      --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 15px;
+      line-height: 1.45;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .app {
+      max-width: 52rem;
+      margin: 0 auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 1.25rem 1rem 1rem;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand p {
+      margin: 0.25rem 0 0;
+      font-size: 0.825rem;
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      padding-top: 0.05rem;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-sm);
+      border-radius: 999px;
+      padding: 0.35rem 0.6rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      user-select: none;
+    }
+
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 0.45rem 0.7rem;
+      font-weight: 650;
+      font-size: 0.85rem;
+      box-shadow: var(--shadow-sm);
+      cursor: pointer;
+    }
+
+    .btn:hover { filter: brightness(0.98); }
+    .btn:active { transform: translateY(0.5px); }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      user-select: none;
+      padding: 0.35rem 0.2rem;
+    }
+
+    .toggle input { transform: translateY(1px); }
+
+    #thread {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+      padding: 0.75rem 0.75rem 1rem;
+      min-height: 12rem;
+      max-height: min(62vh, 640px);
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .empty {
+      padding: 1.05rem 0.25rem 1rem;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .empty strong { color: var(--text); }
+
+    .empty code {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.08rem 0.35rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.9em;
+    }
+
+    .msg-row { display: flex; width: 100%; }
+    .msg-row.user { justify-content: flex-end; }
+    .msg-row.bot { justify-content: flex-start; }
+
+    .bubble {
+      max-width: 92%;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .msg-row.user .bubble {
+      background: rgba(162, 28, 175, 0.12);
+      border: 1px solid rgba(162, 28, 175, 0.22);
+    }
+
+    .msg-row.bot .bubble {
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+
+    .bubble-body {
+      padding: 0.65rem 0.85rem 0.75rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    details {
+      border-top: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+
+    summary {
+      cursor: pointer;
+      padding: 0.55rem 0.85rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+      user-select: none;
+      outline: none;
+    }
+
+    .details-body {
+      padding: 0 0.85rem 0.75rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .details-body pre {
+      margin: 0.5rem 0 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 0.6rem 0.75rem;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.78rem;
+      line-height: 1.4;
+    }
+
+    .composer {
+      margin-top: auto;
+      padding-top: 0.8rem;
+      background: linear-gradient(to top, var(--bg), transparent 70%);
+    }
+
+    .composer-inner {
+      display: flex;
+      gap: 0.6rem;
+      align-items: flex-end;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.5rem;
+      box-shadow: var(--shadow);
+    }
+
+    #msg {
+      flex: 1;
+      min-height: 3.1rem;
+      max-height: 10rem;
+      padding: 0.55rem 0.65rem;
+      border: none;
+      border-radius: 8px;
+      font: inherit;
+      resize: none;
+      background: transparent;
+      color: var(--text);
+    }
+
+    #msg:focus { outline: none; }
+    #msg::placeholder { color: #9aa3b2; }
+
+    #send {
+      flex-shrink: 0;
+      padding: 0.55rem 1.1rem;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 0.875rem;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      align-self: flex-end;
+    }
+
+    #send:hover:not(:disabled) { background: #86198f; }
+    #send:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.55rem 0.25rem 0;
+      font-size: 0.82rem;
+      color: var(--muted);
+      user-select: none;
+    }
+
+    .meta-row .left { display: flex; align-items: center; gap: 0.45rem; }
+    .meta-row .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--muted);
+      opacity: 0.35;
+    }
+    .meta-row .dot.ok { background: var(--ok); opacity: 0.65; }
+    .meta-row .dot.err { background: var(--danger); opacity: 0.75; }
+    .meta-row .right { white-space: nowrap; }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #120416;
+        --surface: #19081f;
+        --surface-2: #13061a;
+        --border: rgba(226, 232, 240, 0.14);
+        --text: #e2e8f0;
+        --muted: rgba(226, 232, 240, 0.65);
+        --shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+      }
+      #msg::placeholder { color: rgba(226, 232, 240, 0.4); }
+      .msg-row.user .bubble {
+        background: rgba(162, 28, 175, 0.18);
+        border-color: rgba(162, 28, 175, 0.3);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <h1>CS-213 Chat</h1>
+      </div>
+      <div class="toolbar">
+        <label class="toggle" title="Include model + skill debug info in responses">
+          <input id="debug" type="checkbox" />
+          Show details
+        </label>
+        <button class="btn" type="button" id="clear">Clear</button>
+      </div>
+    </header>
+
+    <div id="thread" class="panel" aria-live="polite">
+      <div id="empty" class="empty">Ask a question about CS 213 to get started!</div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-inner">
+        <textarea id="msg" placeholder="Ask a question or paste code…" rows="2"></textarea>
+        <button type="button" id="send">Send</button>
+      </div>
+      <div class="meta-row" aria-live="polite">
+        <div class="left">
+          <span id="dot" class="dot"></span>
+          <span id="status">Ready</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const thread = document.getElementById("thread");
+    const msg = document.getElementById("msg");
+    const send = document.getElementById("send");
+    const status = document.getElementById("status");
+    const dot = document.getElementById("dot");
+    const empty = document.getElementById("empty");
+    const clear = document.getElementById("clear");
+    const debug = document.getElementById("debug");
+
+    const HISTORY_LIMIT = 14; // last N messages (user+assistant)
+    const history = [];
+
+    function setStatus(kind, text) {
+      status.textContent = text;
+      dot.className = "dot" + (kind ? " " + kind : "");
+    }
+
+    function ensureEmptyHidden() {
+      if (empty) empty.style.display = "none";
+    }
+
+    function appendMessage(role, text, details) {
+      ensureEmptyHidden();
+      const row = document.createElement("div");
+      row.className = "msg-row " + (role === "you" ? "user" : "bot");
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+
+      const body = document.createElement("div");
+      body.className = "bubble-body";
+      body.textContent = text;
+
+      bubble.appendChild(body);
+
+      if (details && (details.model_used || details.tool_notes)) {
+        const d = document.createElement("details");
+        const s = document.createElement("summary");
+        s.textContent = "Details";
+        const wrap = document.createElement("div");
+        wrap.className = "details-body";
+
+        const lines = [];
+        if (details.model_used) lines.push("Model: " + details.model_used);
+        const meta = document.createElement("div");
+        meta.textContent = lines.join(" • ") || "Debug info";
+        wrap.appendChild(meta);
+
+        if (details.tool_notes) {
+          const pre = document.createElement("pre");
+          pre.textContent = details.tool_notes;
+          wrap.appendChild(pre);
+        }
+
+        d.appendChild(s);
+        d.appendChild(wrap);
+        bubble.appendChild(d);
+      }
+
+      row.appendChild(bubble);
+      thread.appendChild(row);
+      thread.scrollTop = thread.scrollHeight;
+    }
+
+    function pushHistory(role, text) {
+      history.push({ role, text });
+      if (history.length > HISTORY_LIMIT) {
+        history.splice(0, history.length - HISTORY_LIMIT);
+      }
+    }
+
+    async function go() {
+      const text = msg.value.trim();
+      if (!text) return;
+      send.disabled = true;
+      setStatus("", "Thinking…");
+
+      appendMessage("you", text);
+      pushHistory("user", text);
+      msg.value = "";
+
+      try {
+        const r = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text, history, debug: debug.checked }),
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          appendMessage("bot", "[Error] " + (data.error || r.statusText));
+          setStatus("err", "Request failed.");
+        } else {
+          appendMessage("bot", data.reply || "(empty reply)", data);
+          pushHistory("assistant", data.reply || "");
+          setStatus("ok", "Ready");
+        }
+      } catch (e) {
+        appendMessage("bot", "[Error] " + String(e));
+        setStatus("err", "Network error.");
+      }
+
+      send.disabled = false;
+      msg.focus();
+    }
+
+    send.addEventListener("click", go);
+    msg.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        go();
+      }
+    });
+
+    clear.addEventListener("click", () => {
+      thread.innerHTML = "";
+      thread.appendChild(empty);
+      empty.style.display = "";
+      history.splice(0, history.length);
+      setStatus("ok", "Ready");
+      msg.focus();
+    });
+
+    setStatus("ok", "Ready");
+    msg.focus();
+  </script>
+</body>
+</html>

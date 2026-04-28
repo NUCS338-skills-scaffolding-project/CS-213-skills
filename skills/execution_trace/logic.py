@@ -1,436 +1,231 @@
+"""Tiny step tracer: Intel-style mov/add/sub/push/pop on 64-bit regs + qword memory.
+
+Outputs are tutoring-oriented: each step includes a compact "delta" describing what changed,
+so a chatbot can guide a student step-by-step while tracking registers/memory.
+"""
 from __future__ import annotations
 
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-
-MASK64 = (1 << 64) - 1
-
-_RE_COMMENT = re.compile(r"(#|;|//).*?$")
-_RE_LABEL = re.compile(r"^\s*([A-Za-z_.$][\w.$]*):\s*$")
+MASK = (1 << 64) - 1
 
 
-def _strip_comments(line: str) -> str:
-    return _RE_COMMENT.sub("", line).strip()
+def _norm(r: str) -> str:
+    return r.strip().lower()
 
 
-def _detect_syntax(asm: str) -> str:
-    if re.search(r"[%]\w+", asm) or re.search(r"\$\-?0x[0-9a-fA-F]+|\$\-?\d+", asm):
-        return "att"
-    if re.search(r"\bPTR\b|\[[^\]]+\]", asm):
-        return "intel"
-    if "(" in asm and ")" in asm:
-        return "att"
-    return "intel"
+def _hex(v: int) -> str:
+    return hex(int(v) & MASK)
 
 
-def _parse_int(s: str) -> Optional[int]:
+def _delta(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
+    bregs = (before.get("regs") or {}) if isinstance(before.get("regs"), dict) else {}
+    aregs = (after.get("regs") or {}) if isinstance(after.get("regs"), dict) else {}
+    bmem = (before.get("mem") or {}) if isinstance(before.get("mem"), dict) else {}
+    amem = (after.get("mem") or {}) if isinstance(after.get("mem"), dict) else {}
+
+    changed_regs: Dict[str, Dict[str, str]] = {}
+    for k in set(bregs.keys()) | set(aregs.keys()):
+        bv = bregs.get(k)
+        av = aregs.get(k)
+        if bv != av and isinstance(av, int):
+            changed_regs[str(k)] = {"before": _hex(int(bv) if isinstance(bv, int) else 0), "after": _hex(int(av))}
+
+    touched_mem: Dict[str, Dict[str, str]] = {}
+    for k in set(bmem.keys()) | set(amem.keys()):
+        bv = bmem.get(k)
+        av = amem.get(k)
+        if bv != av and isinstance(k, int) and isinstance(av, int):
+            touched_mem[_hex(int(k))] = {"before": _hex(int(bv) if isinstance(bv, int) else 0), "after": _hex(int(av))}
+
+    return {"regs_changed": changed_regs, "mem_changed": touched_mem}
+
+
+def _delta_summary(d: Dict[str, Any], *, max_regs: int = 4) -> str:
+    regs = d.get("regs_changed") or {}
+    if not isinstance(regs, dict) or not regs:
+        return "(no register change)"
+
+    priority = [
+        "rax",
+        "eax",
+        "rbx",
+        "rcx",
+        "rdx",
+        "rsi",
+        "rdi",
+        "rsp",
+        "rbp",
+        "r8",
+        "r9",
+        "r10",
+        "r11",
+        "r12",
+        "r13",
+        "r14",
+        "r15",
+    ]
+    keys = list(regs.keys())
+    keys.sort(key=lambda k: (priority.index(k) if k in priority else 999, k))
+
+    parts: List[str] = []
+    for k in keys[:max_regs]:
+        v = regs.get(k) or {}
+        if isinstance(v, dict):
+            parts.append(f"{k}: {v.get('before')}→{v.get('after')}")
+    extra = len(keys) - len(parts)
+    if extra > 0:
+        parts.append(f"+{extra} more")
+    return ", ".join(parts)
+
+
+def _reg_hex(regs: Dict[str, Any], name: str) -> str:
+    v = regs.get(name)
+    if isinstance(v, int):
+        return _hex(v)
+    return ""
+
+
+def _walkthrough_table_md(steps: List[Dict[str, Any]], *, max_steps: int = 12) -> str:
+    """
+    A compact markdown table so a tutor can point at Step N and track values.
+    """
+    if not steps:
+        return ""
+    cols = ["step", "asm", "delta", "rdi", "rsi", "rdx", "rax", "rsp"]
+    lines = ["| " + " | ".join(cols) + " |", "| " + " | ".join(["---"] * len(cols)) + " |"]
+    for i, st in enumerate(steps[:max_steps]):
+        asm = str((st.get("asm") or "")).strip().split("\n")[0]
+        delta = str(st.get("delta_summary") or "")
+        after_regs = ((st.get("after") or {}).get("regs") or {}) if isinstance(st.get("after"), dict) else {}
+        if not isinstance(after_regs, dict):
+            after_regs = {}
+        row = [
+            str(i),
+            asm.replace("|", "\\|"),
+            delta.replace("|", "\\|"),
+            _reg_hex(after_regs, "rdi"),
+            _reg_hex(after_regs, "rsi"),
+            _reg_hex(after_regs, "rdx"),
+            _reg_hex(after_regs, "rax"),
+            _reg_hex(after_regs, "rsp"),
+        ]
+        lines.append("| " + " | ".join(row) + " |")
+    if len(steps) > max_steps:
+        lines.append(f"\n… ({len(steps) - max_steps} more steps not shown) …")
+    return "\n".join(lines)
+
+
+def _parse_mem(s: str) -> Optional[Tuple[int, str]]:
     s = s.strip()
-    if not s:
-        return None
-    neg = False
-    if s.startswith("-"):
-        neg = True
-        s = s[1:].strip()
-    base = 10
-    if s.lower().startswith("0x"):
-        base = 16
-        s = s[2:]
-    if not re.fullmatch(r"[0-9a-fA-F]+", s):
-        return None
-    v = int(s, base)
-    return -v if neg else v
-
-
-def _norm_reg(r: str) -> str:
-    return r.strip().lstrip("%").lower()
-
-
-def _split_operands(ops: str) -> List[str]:
-    out: List[str] = []
-    cur: List[str] = []
-    depth = 0
-    for ch in ops:
-        if ch in "[(":
-            depth += 1
-        elif ch in "])":
-            depth = max(0, depth - 1)
-        if ch == "," and depth == 0:
-            out.append("".join(cur).strip())
-            cur = []
-        else:
-            cur.append(ch)
-    if cur:
-        out.append("".join(cur).strip())
-    return [o for o in out if o]
-
-
-def _parse_att_mem(op: str) -> Optional[Tuple[int, Optional[str], Optional[str], int]]:
-    # disp(base,index,scale)
-    m = re.fullmatch(r"(?P<disp>[-+]?0x[0-9a-fA-F]+|[-+]?\d+)?\((?P<body>[^)]*)\)", op.strip())
+    m = re.match(r"qword\s+ptr\s+\[(.+)\]", s, re.I)
+    if not m:
+        m = re.match(r"\[(.+)\]", s)
     if not m:
         return None
-    disp = _parse_int(m.group("disp") or "0") or 0
-    body = m.group("body").strip()
-    parts = [p.strip() for p in body.split(",")] if body else []
-    base = _norm_reg(parts[0]) if len(parts) >= 1 and parts[0] else None
-    index = _norm_reg(parts[1]) if len(parts) >= 2 and parts[1] else None
-    scale = _parse_int(parts[2]) if len(parts) >= 3 and parts[2] else None
-    sc = int(scale) if scale is not None else 1
-    if sc not in (1, 2, 4, 8):
-        sc = 1
-    return disp, base, index, sc
+    body = m.group(1).replace(" ", "")
+    if re.fullmatch(r"[a-z0-9]+", body, re.I):
+        return 0, _norm(body)
+    m2 = re.match(r"([a-z0-9]+)([+-]\d+)", body, re.I)
+    if m2:
+        return int(m2.group(2)), _norm(m2.group(1))
+    return None
 
 
-def _parse_intel_mem(op: str) -> Optional[Tuple[int, Optional[str], Optional[str], int]]:
-    s = op.strip()
-    m_size = re.match(r"^(byte|word|dword|qword)\s+ptr\s+(?P<rest>.+)$", s, flags=re.IGNORECASE)
-    if m_size:
-        s = m_size.group("rest").strip()
-    m = re.fullmatch(r"\[(?P<body>[^\]]+)\]", s)
-    if not m:
-        return None
-    body = m.group("body").strip().replace(" ", "")
-    tokens = re.split(r"(\+|\-)", body)
-    sign = +1
-    disp = 0
-    base = None
-    index = None
-    scale = 1
-    for t in tokens:
-        if t == "+":
-            sign = +1
-            continue
-        if t == "-":
-            sign = -1
-            continue
-        if not t:
-            continue
-        m_is = re.fullmatch(r"([A-Za-z][\w]*)\*(\d+)", t)
-        if m_is:
-            idx = _norm_reg(m_is.group(1))
-            sc = int(m_is.group(2))
-            if sc in (1, 2, 4, 8) and index is None:
-                index, scale = idx, sc
-                continue
-            return None
-        if re.fullmatch(r"[A-Za-z][\w]*", t):
-            reg = _norm_reg(t)
-            if base is None:
-                base = reg
-            elif index is None:
-                index, scale = reg, 1
-            else:
-                return None
-            continue
-        iv = _parse_int(t)
-        if iv is not None:
-            disp += sign * iv
-            continue
-        return None
-    return disp, base, index, scale
+def _read_op(op: str, regs: Dict[str, int], mem: Dict[int, int]) -> int:
+    op = op.strip().rstrip(",").strip()
+    if re.fullmatch(r"-?0x[0-9a-f]+|-?\d+", op, re.I):
+        return int(op, 0) & MASK
+    if op.startswith("QWORD") or op.startswith("["):
+        p = _parse_mem(op)
+        if not p:
+            return 0
+        disp, base = p
+        addr = (regs.get(base, 0) + disp) & MASK
+        return mem.get(addr, 0) & MASK
+    return regs.get(_norm(op), 0) & MASK
 
 
-def _eval_mem_addr(op: str, syntax: str, regs: Dict[str, int]) -> Optional[int]:
-    if syntax == "att":
-        parsed = _parse_att_mem(op)
-    else:
-        parsed = _parse_intel_mem(op)
-    if not parsed:
-        return None
-    disp, base, index, scale = parsed
-    addr = disp
-    if base:
-        addr += int(regs.get(base, 0))
-    if index:
-        addr += int(regs.get(index, 0)) * int(scale)
-    return addr & MASK64
+def _write_op(op: str, val: int, regs: Dict[str, int], mem: Dict[int, int]) -> None:
+    op = op.strip().rstrip(",").strip()
+    val &= MASK
+    if op.startswith("QWORD") or op.startswith("["):
+        p = _parse_mem(op)
+        if p:
+            disp, base = p
+            addr = (regs.get(base, 0) + disp) & MASK
+            mem[addr] = val
+        return
+    regs[_norm(op)] = val
 
 
-def _eval_operand_value(op: str, syntax: str, regs: Dict[str, int], mem: Dict[int, int]) -> Tuple[Optional[int], Optional[str]]:
-    s = op.strip().rstrip(",").strip()
-    if not s:
-        return None, "empty operand"
-
-    if syntax == "att":
-        if s.startswith("$"):
-            iv = _parse_int(s[1:])
-            return (iv & MASK64) if iv is not None else None, None if iv is not None else f"bad immediate: {s}"
-        if s.startswith("%"):
-            return int(regs.get(_norm_reg(s), 0)) & MASK64, None
-        addr = _eval_mem_addr(s, syntax, regs)
-        if addr is not None:
-            return int(mem.get(addr, 0)) & MASK64, None
-        iv = _parse_int(s)
-        if iv is not None:
-            return iv & MASK64, None
-        return None, f"unknown operand: {s}"
-
-    # intel
-    if re.search(r"\bptr\b", s, flags=re.IGNORECASE) or (s.startswith("[") and s.endswith("]")):
-        addr = _eval_mem_addr(s, syntax, regs)
-        if addr is None:
-            return None, f"bad memory operand: {s}"
-        return int(mem.get(addr, 0)) & MASK64, None
-    if re.fullmatch(r"[-+]?0x[0-9a-fA-F]+|[-+]?\d+", s):
-        iv = _parse_int(s)
-        return (iv & MASK64) if iv is not None else None, None if iv is not None else f"bad immediate: {s}"
-    if re.fullmatch(r"[A-Za-z][\w]*", s):
-        return int(regs.get(_norm_reg(s), 0)) & MASK64, None
-    return None, f"unknown operand: {s}"
-
-
-def _write_operand(op: str, syntax: str, regs: Dict[str, int], mem: Dict[int, int], value: int) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    s = op.strip().rstrip(",").strip()
-    value &= MASK64
-
-    if syntax == "att":
-        if s.startswith("%"):
-            reg = _norm_reg(s)
-            regs[reg] = value
-            return {"kind": "reg", "reg": reg, "value": value}, None
-        addr = _eval_mem_addr(s, syntax, regs)
-        if addr is not None:
-            mem[addr] = value
-            return {"kind": "mem", "addr": addr, "value": value}, None
-        return None, f"unsupported destination: {s}"
-
-    # intel
-    if re.search(r"\bptr\b", s, flags=re.IGNORECASE) or (s.startswith("[") and s.endswith("]")):
-        addr = _eval_mem_addr(s, syntax, regs)
-        if addr is None:
-            return None, f"bad destination mem: {s}"
-        mem[addr] = value
-        return {"kind": "mem", "addr": addr, "value": value}, None
-    if re.fullmatch(r"[A-Za-z][\w]*", s):
-        reg = _norm_reg(s)
-        regs[reg] = value
-        return {"kind": "reg", "reg": reg, "value": value}, None
-    return None, f"unsupported destination: {s}"
-
-
-def _snapshot(regs: Dict[str, int], mem: Dict[int, int]) -> Dict[str, Any]:
-    return {"regs": dict(regs), "mem": dict(mem)}
-
-
-def _diff(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
-    b_regs = before["regs"]
-    a_regs = after["regs"]
-    reg_changes = {k: a_regs[k] for k in a_regs if b_regs.get(k) != a_regs.get(k)}
-
-    b_mem = before["mem"]
-    a_mem = after["mem"]
-    mem_changes = {k: a_mem[k] for k in a_mem if b_mem.get(k) != a_mem.get(k)}
-    return {"regs": reg_changes, "mem": mem_changes}
-
-
-def _parse_line_to_instr(line: str) -> Optional[Dict[str, Any]]:
-    stripped = _strip_comments(line)
-    if not stripped:
-        return None
-    if _RE_LABEL.match(stripped):
-        return None
-    parts = stripped.split(None, 1)
-    mnemonic = parts[0].lower()
-    ops_s = parts[1] if len(parts) > 1 else ""
-    ops = _split_operands(ops_s) if ops_s else []
-    return {"mnemonic": mnemonic, "operands": ops, "raw": line}
-
-
-def _normalize_two_operands(ops: List[str], syntax: str) -> Tuple[Optional[str], Optional[str]]:
-    if len(ops) != 2:
-        return None, None
-    if syntax == "att":
-        return ops[0], ops[1]  # src, dst
-    return ops[1], ops[0]  # src, dst for intel (dst,src in text)
-
-
-def run(input: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Trace a subset of x86-64 assembly.
-
-    See skills.md for the supported input/output schema.
-    """
-    asm = (input or {}).get("asm")
+def run(inp: Dict[str, Any]) -> Dict[str, Any]:
+    asm = (inp or {}).get("asm")
     if not isinstance(asm, str) or not asm.strip():
-        return {"ok": False, "syntax": None, "steps": [], "final_state": {}, "warnings": [], "errors": ["Missing required string input['asm']."]}
+        return {"ok": False, "steps": [], "final_state": {}, "errors": ["Missing input['asm']."]}
 
-    syntax_req = (input or {}).get("syntax", "auto")
-    syntax = _detect_syntax(asm) if syntax_req == "auto" else str(syntax_req).lower()
-    if syntax not in ("att", "intel"):
-        syntax = _detect_syntax(asm)
+    st = (inp or {}).get("initial_state") or {}
+    regs = {k.lower(): int(v) & MASK for k, v in (st.get("regs") or {}).items()}
+    mem = {int(a) & MASK: int(v) & MASK for a, v in (st.get("mem") or {}).items()}
+    regs.setdefault("rsp", 0x1000)
+    regs.setdefault("rbp", 0)
 
-    initial_state = (input or {}).get("initial_state", {}) or {}
-    regs: Dict[str, int] = {k.lower(): int(v) & MASK64 for k, v in (initial_state.get("regs", {}) or {}).items()}
-    mem: Dict[int, int] = {int(k) & MASK64: int(v) & MASK64 for k, v in (initial_state.get("mem", {}) or {}).items()}
-
-    # Provide default stack pointer if missing to keep examples usable.
-    regs.setdefault("rsp", 0x0)
-    regs.setdefault("rbp", 0x0)
-
-    max_steps = int((input or {}).get("max_steps", 200))
-    if max_steps <= 0:
-        max_steps = 200
-    stop_on_error = bool((input or {}).get("stop_on_error", True))
-
-    warnings: List[str] = []
-    errors: List[str] = []
     steps: List[Dict[str, Any]] = []
-
-    lines = asm.splitlines()
-    ip = 0
-    executed = 0
-
-    for raw in lines:
-        if executed >= max_steps:
-            warnings.append(f"Stopped after {max_steps} steps (max_steps cap).")
-            break
-        instr = _parse_line_to_instr(raw)
-        if instr is None:
+    for raw in asm.splitlines():
+        line = raw.split("#", 1)[0].split(";", 1)[0].strip()
+        if not line or line.endswith(":"):
             continue
+        before = {"regs": dict(regs), "mem": dict(mem)}
+        parts = line.split(None, 1)
+        mn = parts[0].lower()
+        rest = parts[1] if len(parts) > 1 else ""
+        ops = [x.strip() for x in rest.split(",")] if rest else []
 
-        before = _snapshot(regs, mem)
-        mnem = instr["mnemonic"]
-        ops = instr["operands"]
-
-        err: Optional[str] = None
-        mem_write: Optional[Dict[str, Any]] = None
-
-        try:
-            if mnem in ("mov", "movq", "movl", "movb", "movw", "lea", "add", "addq", "sub", "subq", "xor", "xorq", "and", "or", "imul"):
-                if len(ops) != 2:
-                    err = f"{mnem} expects 2 operands, got {len(ops)}"
-                else:
-                    src_txt, dst_txt = _normalize_two_operands(ops, syntax)
-                    if src_txt is None or dst_txt is None:
-                        err = "bad operand normalization"
-                    else:
-                        if mnem == "lea":
-                            addr = _eval_mem_addr(src_txt, syntax, regs)
-                            if addr is None:
-                                err = f"lea source not recognized as mem addr: {src_txt}"
-                            else:
-                                mem_write, err = _write_operand(dst_txt, syntax, regs, mem, addr)
-                        else:
-                            src_val, e1 = _eval_operand_value(src_txt, syntax, regs, mem)
-                            if e1:
-                                err = e1
-                            else:
-                                if mnem.startswith("mov"):
-                                    mem_write, err = _write_operand(dst_txt, syntax, regs, mem, int(src_val or 0))
-                                elif mnem.startswith("add"):
-                                    dst_val, e2 = _eval_operand_value(dst_txt, syntax, regs, mem)
-                                    if e2:
-                                        err = e2
-                                    else:
-                                        mem_write, err = _write_operand(dst_txt, syntax, regs, mem, (int(dst_val or 0) + int(src_val or 0)) & MASK64)
-                                elif mnem.startswith("sub"):
-                                    dst_val, e2 = _eval_operand_value(dst_txt, syntax, regs, mem)
-                                    if e2:
-                                        err = e2
-                                    else:
-                                        mem_write, err = _write_operand(dst_txt, syntax, regs, mem, (int(dst_val or 0) - int(src_val or 0)) & MASK64)
-                                elif mnem.startswith("xor"):
-                                    dst_val, e2 = _eval_operand_value(dst_txt, syntax, regs, mem)
-                                    if e2:
-                                        err = e2
-                                    else:
-                                        mem_write, err = _write_operand(dst_txt, syntax, regs, mem, (int(dst_val or 0) ^ int(src_val or 0)) & MASK64)
-                                elif mnem == "and":
-                                    dst_val, e2 = _eval_operand_value(dst_txt, syntax, regs, mem)
-                                    if e2:
-                                        err = e2
-                                    else:
-                                        mem_write, err = _write_operand(dst_txt, syntax, regs, mem, (int(dst_val or 0) & int(src_val or 0)) & MASK64)
-                                elif mnem == "or":
-                                    dst_val, e2 = _eval_operand_value(dst_txt, syntax, regs, mem)
-                                    if e2:
-                                        err = e2
-                                    else:
-                                        mem_write, err = _write_operand(dst_txt, syntax, regs, mem, (int(dst_val or 0) | int(src_val or 0)) & MASK64)
-                                elif mnem == "imul":
-                                    dst_val, e2 = _eval_operand_value(dst_txt, syntax, regs, mem)
-                                    if e2:
-                                        err = e2
-                                    else:
-                                        mem_write, err = _write_operand(dst_txt, syntax, regs, mem, (int(dst_val or 0) * int(src_val or 0)) & MASK64)
-                                else:
-                                    err = f"unhandled ALU op: {mnem}"
-
-            elif mnem == "push":
-                if len(ops) != 1:
-                    err = f"push expects 1 operand, got {len(ops)}"
-                else:
-                    val, e = _eval_operand_value(ops[0], syntax, regs, mem)
-                    if e:
-                        err = e
-                    else:
-                        regs["rsp"] = (int(regs.get("rsp", 0)) - 8) & MASK64
-                        mem[int(regs["rsp"])] = int(val or 0) & MASK64
-                        mem_write = {"kind": "mem", "addr": int(regs["rsp"]), "value": mem[int(regs["rsp"])]}
-
-            elif mnem == "pop":
-                if len(ops) != 1:
-                    err = f"pop expects 1 operand, got {len(ops)}"
-                else:
-                    addr = int(regs.get("rsp", 0)) & MASK64
-                    val = int(mem.get(addr, 0)) & MASK64
-                    mem_write, err = _write_operand(ops[0], syntax, regs, mem, val)
-                    regs["rsp"] = (addr + 8) & MASK64
-
-            elif mnem in ("ret", "retq"):
-                # Model as popping return address into a pseudo-reg 'rip' (if present).
-                addr = int(regs.get("rsp", 0)) & MASK64
-                ret_addr = int(mem.get(addr, 0)) & MASK64
-                regs["rsp"] = (addr + 8) & MASK64
-                regs["rip"] = ret_addr
-
-            elif mnem == "call":
-                # Without symbol resolution, we just push a placeholder "return address".
-                regs["rsp"] = (int(regs.get("rsp", 0)) - 8) & MASK64
-                mem[int(regs["rsp"])] = 0xDEADBEEFDEADBEEF
-                warnings.append("call: pushed placeholder return address; did not jump to target.")
-
-            elif mnem in ("cmp", "test", "jne", "je", "jg", "jge", "jl", "jle", "jmp"):
-                # Flags/control flow not modeled; record as warning.
-                warnings.append(f"{mnem}: flags/control-flow not modeled; trace continues linearly.")
-
-            else:
-                err = f"Unsupported instruction mnemonic: {mnem}"
-
-        except Exception as ex:  # pragma: no cover
-            err = f"Exception executing '{mnem}': {ex}"
-
-        after = _snapshot(regs, mem)
-        d = _diff(before, after)
-
-        step = {
-            "ip": ip,
-            "asm": raw,
-            "instruction": {"mnemonic": mnem, "operands": ops, "syntax": syntax},
-            "before": {"regs": before["regs"]},
-            "after": {"regs": after["regs"]},
-            "diff": d,
-        }
-        if mem_write:
-            step["mem_write"] = mem_write
-        if err:
-            step["error"] = err
-            errors.append(err)
-            steps.append(step)
-            if stop_on_error:
-                break
+        err = None
+        if mn == "mov" and len(ops) == 2:
+            _write_op(ops[0], _read_op(ops[1], regs, mem), regs, mem)
+        elif mn == "add" and len(ops) == 2:
+            dst, src = ops[0], ops[1]
+            _write_op(dst, _read_op(dst, regs, mem) + _read_op(src, regs, mem), regs, mem)
+        elif mn == "sub" and len(ops) == 2:
+            dst, src = ops[0], ops[1]
+            _write_op(dst, _read_op(dst, regs, mem) - _read_op(src, regs, mem), regs, mem)
+        elif mn == "push" and len(ops) == 1:
+            regs["rsp"] = (regs["rsp"] - 8) & MASK
+            mem[regs["rsp"]] = _read_op(ops[0], regs, mem)
+        elif mn == "pop" and len(ops) == 1:
+            v = mem.get(regs["rsp"], 0)
+            regs["rsp"] = (regs["rsp"] + 8) & MASK
+            _write_op(ops[0], v, regs, mem)
         else:
-            steps.append(step)
+            err = f"unsupported: {mn}"
 
-        ip += 1
-        executed += 1
+        after = {"regs": dict(regs), "mem": dict(mem)}
+        d = _delta(before, after)
+        steps.append(
+            {
+                "asm": raw,
+                "error": err,
+                "before": before,
+                "after": after,
+                "delta": d,
+                "delta_summary": _delta_summary(d),
+            }
+        )
+        if err:
+            return {
+                "ok": False,
+                "steps": steps,
+                "walkthrough_table_md": _walkthrough_table_md(steps),
+                "final_state": after,
+                "errors": [err],
+            }
 
     return {
-        "ok": len(errors) == 0,
-        "syntax": syntax,
+        "ok": True,
         "steps": steps,
-        "final_state": {"regs": dict(regs), "mem": dict(mem)},
-        "warnings": warnings,
-        "errors": errors,
+        "walkthrough_table_md": _walkthrough_table_md(steps),
+        "final_state": {"regs": regs, "mem": mem},
+        "errors": [],
     }

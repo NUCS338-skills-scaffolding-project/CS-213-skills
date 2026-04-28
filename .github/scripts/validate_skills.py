@@ -79,7 +79,7 @@ def validate_all_skills(root_dir="skills"):
         print("\nERROR:Validation Failed! Fix these issues before pushing:\n")
         for e in errors:
             print(e)
-        print("\TIP: Every skills.md must include:")
+        print("\nTIP: Every skills.md must include:")
         print("   skill_id, name, skill_type, tags")
         print("\nTIP: ALL skills must include:")
         print("   skill_id, name, skill_type, tags, python_entry + a logic.py file")

@@ -1,432 +1,295 @@
+"""TA-style helper for Intel/AT&T x86-64 reading (teaching hints, not solutions)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 
-_RE_COMMENT = re.compile(r"(#|;|//).*?$")
-_RE_LABEL = re.compile(r"^\s*([A-Za-z_.$][\w.$]*):\s*$")
-
-
-@dataclass(frozen=True)
-class Operand:
-    kind: str  # "reg" | "imm" | "mem" | "label" | "unknown"
-    text: str  # original-ish text (trimmed)
-    # Normalized fields (best-effort; only for mem)
-    base: Optional[str] = None
-    index: Optional[str] = None
-    scale: Optional[int] = None
-    disp: Optional[int] = None
-    size: Optional[str] = None  # "byte"|"word"|"dword"|"qword"|None
-
-
-def _strip_comments(line: str) -> str:
-    return _RE_COMMENT.sub("", line).strip()
-
-
-def _detect_syntax(asm: str) -> str:
-    # Heuristic: AT&T uses %regs and $immediates; Intel often uses "PTR" and bare regs.
-    if re.search(r"[%]\w+", asm) or re.search(r"\$\-?0x[0-9a-fA-F]+|\$\-?\d+", asm):
-        return "att"
-    if re.search(r"\bPTR\b|\[[^\]]+\]", asm):
-        return "intel"
-    # Fallback: if we see parentheses addressing, assume AT&T; else Intel.
-    if "(" in asm and ")" in asm:
+def _syntax(asm: str) -> str:
+    if "%" in asm or "$" in asm:
         return "att"
     return "intel"
 
 
-def _parse_int(s: str) -> Optional[int]:
-    s = s.strip()
-    if not s:
-        return None
-    neg = False
-    if s.startswith("-"):
-        neg = True
-        s = s[1:].strip()
-    base = 10
-    if s.lower().startswith("0x"):
-        base = 16
-        s = s[2:]
-    if not re.fullmatch(r"[0-9a-fA-F]+", s):
-        return None
-    val = int(s, base)
-    return -val if neg else val
+_JCC = {
+    "je",
+    "jne",
+    "jg",
+    "jge",
+    "jl",
+    "jle",
+    "ja",
+    "jae",
+    "jb",
+    "jbe",
+    "jo",
+    "jno",
+    "js",
+    "jns",
+    "jp",
+    "jnp",
+    "jc",
+    "jnc",
+    "jz",
+    "jnz",
+}
 
 
-def _norm_reg(r: str) -> str:
-    r = r.strip()
-    r = r.lstrip("%")
-    return r.lower()
+def _strip_comment(line: str) -> str:
+    # Intel often uses ';' and AT&T often uses '#'
+    return line.split("#", 1)[0].split(";", 1)[0].strip()
 
 
-def _parse_att_mem(op: str) -> Optional[Operand]:
-    # disp(base,index,scale) where any may be missing. Example: -0x8(%rbp) or (%rax,%rcx,4)
-    m = re.fullmatch(r"(?P<disp>[-+]?0x[0-9a-fA-F]+|[-+]?\d+)?\((?P<body>[^)]*)\)", op.strip())
-    if not m:
-        return None
-    disp = _parse_int(m.group("disp") or "0") or 0
-    body = m.group("body").strip()
-    parts = [p.strip() for p in body.split(",")] if body else []
-    base = _norm_reg(parts[0]) if len(parts) >= 1 and parts[0] else None
-    index = _norm_reg(parts[1]) if len(parts) >= 2 and parts[1] else None
-    scale = _parse_int(parts[2]) if len(parts) >= 3 and parts[2] else None
-    if scale is not None and scale not in (1, 2, 4, 8):
-        scale = None
-    return Operand(kind="mem", text=op.strip(), base=base, index=index, scale=scale, disp=disp)
+def _lower_mnemonic(token: str) -> str:
+    # Keep it simple; strip common size suffixes like movq/movl.
+    t = token.strip().lower()
+    return re.sub(r"(b|w|l|q)$", "", t)
 
 
-def _parse_intel_mem(op: str) -> Optional[Operand]:
-    # Examples:
-    #   [rbp-8]
-    #   qword ptr [rbp + rax*8 - 0x10]
-    s = op.strip()
-    size = None
-    m_size = re.match(r"^(?P<size>(byte|word|dword|qword))\s+ptr\s+(?P<rest>.+)$", s, flags=re.IGNORECASE)
-    if m_size:
-        size = m_size.group("size").lower()
-        s = m_size.group("rest").strip()
-    m = re.fullmatch(r"\[(?P<body>[^\]]+)\]", s)
-    if not m:
-        return None
-    body = m.group("body").strip()
-
-    # Very small expression parser: tokens separated by +/-
-    # Supports: base, index*scale, and constant displacement.
-    tokens = re.split(r"(\+|\-)", body.replace(" ", ""))
-    sign = +1
-    base = None
-    index = None
-    scale = None
-    disp = 0
-    for t in tokens:
-        if t == "+":
-            sign = +1
-            continue
-        if t == "-":
-            sign = -1
-            continue
-        if not t:
-            continue
-
-        # index*scale
-        m_is = re.fullmatch(r"([A-Za-z][\w]*)\*(\d+)", t)
-        if m_is:
-            idx = _norm_reg(m_is.group(1))
-            sc = int(m_is.group(2))
-            if sc in (1, 2, 4, 8) and index is None:
-                index, scale = idx, sc
-            else:
-                # can't represent multiple index terms
-                return Operand(kind="mem", text=op.strip(), base=base, index=index, scale=scale, disp=disp, size=size)
-            continue
-
-        # register
-        if re.fullmatch(r"[A-Za-z][\w]*", t):
-            reg = _norm_reg(t)
-            if base is None:
-                base = reg
-            elif index is None:
-                index, scale = reg, 1
-            else:
-                return Operand(kind="mem", text=op.strip(), base=base, index=index, scale=scale, disp=disp, size=size)
-            continue
-
-        # number
-        iv = _parse_int(t)
-        if iv is not None:
-            disp += sign * iv
-            continue
-
-        # unknown token
-        return None
-
-    return Operand(kind="mem", text=op.strip(), base=base, index=index, scale=scale, disp=disp, size=size)
+def _find_scales(s: str) -> List[int]:
+    scales: List[int] = []
+    # Intel addressing: [rdi+rdx*4+8]
+    for m in re.finditer(r"\*\s*(1|2|4|8)\b", s):
+        scales.append(int(m.group(1)))
+    # AT&T addressing: (%rdi,%rdx,4)
+    for m in re.finditer(r",\s*(1|2|4|8)\s*\)", s):
+        scales.append(int(m.group(1)))
+    return scales
 
 
-def _parse_operand(op: str, syntax: str) -> Operand:
-    s = op.strip()
-    if not s:
-        return Operand(kind="unknown", text=s)
-
-    # Remove trailing commas
-    if s.endswith(","):
-        s = s[:-1].strip()
-
-    if syntax == "att":
-        if s.startswith("%"):
-            return Operand(kind="reg", text=s, base=_norm_reg(s))
-        if s.startswith("$"):
-            return Operand(kind="imm", text=s, disp=_parse_int(s[1:]))
-        mem = _parse_att_mem(s)
-        if mem:
-            return mem
-        if re.fullmatch(r"[-+]?0x[0-9a-fA-F]+|[-+]?\d+", s):
-            return Operand(kind="imm", text=s, disp=_parse_int(s))
-        return Operand(kind="label", text=s)
-
-    # intel
-    if re.fullmatch(r"\[(.+)\]", s) or re.search(r"\bptr\b", s, flags=re.IGNORECASE):
-        mem = _parse_intel_mem(s)
-        if mem:
-            return mem
-    if re.fullmatch(r"[-+]?0x[0-9a-fA-F]+|[-+]?\d+", s):
-        return Operand(kind="imm", text=s, disp=_parse_int(s))
-    if re.fullmatch(r"[A-Za-z][\w]*", s):
-        return Operand(kind="reg", text=s, base=_norm_reg(s))
-    return Operand(kind="label", text=s)
+def _mentions_mem(s: str) -> bool:
+    return ("[" in s and "]" in s) or ("(" in s and ")" in s and "," in s)
 
 
-def _split_operands(ops: str) -> List[str]:
-    # Split on commas, but keep brackets/parentheses together.
+def _guess_ret_type_hint(lines: List[str], syn: str) -> str:
+    # Return is in rax/eax; 32-bit writes usually mean int-like.
+    joined = "\n".join(lines).lower()
+    if syn == "intel":
+        if re.search(r"\b(eax)\b", joined) and not re.search(r"\b(rax)\b", joined):
+            return "Return value likely fits in 32 bits (e.g., int), since code uses EAX."
+        if re.search(r"\b(rax)\b", joined):
+            return "Return value likely 64-bit (e.g., long/pointer), since code uses RAX."
+        return "Return value is in RAX/EAX on x86-64; look for the last write to EAX/RAX before `ret`."
+    # AT&T
+    if re.search(r"%eax\b", joined) and not re.search(r"%rax\b", joined):
+        return "Return value likely fits in 32 bits (e.g., int), since code uses %eax."
+    if re.search(r"%rax\b", joined):
+        return "Return value likely 64-bit (e.g., long/pointer), since code uses %rax."
+    return "Return value is in %rax/%eax on x86-64; look for the last write before `ret`."
+
+
+def _arg_map_hint() -> str:
+    return "SysV x86-64 args: arg0=rdi, arg1=rsi, arg2=rdx (then rcx, r8, r9)."
+
+
+def _scale_type_hints(scales: List[int]) -> List[str]:
     out: List[str] = []
-    cur = []
-    depth = 0
-    for ch in ops:
-        if ch in "[(":
-            depth += 1
-        elif ch in "])":
-            depth = max(0, depth - 1)
-        if ch == "," and depth == 0:
-            out.append("".join(cur).strip())
-            cur = []
-        else:
-            cur.append(ch)
-    if cur:
-        out.append("".join(cur).strip())
-    return [o for o in out if o]
+    for sc in sorted(set(scales)):
+        if sc == 4:
+            out.append("Scale 4 suggests `int` array/field access (e.g., base + i*4).")
+        elif sc == 8:
+            out.append("Scale 8 suggests `long`/pointer/double-sized access (base + i*8).")
+        elif sc in (1, 2):
+            out.append(f"Scale {sc} suggests byte/short-ish access (base + i*{sc}).")
+    return out
 
 
-def _normalize_instruction(mnemonic: str, operands: List[Operand], syntax: str) -> Dict[str, Any]:
-    m = mnemonic.lower()
-    ops = operands
-    # Normalize operand order: AT&T is src,dst; Intel is dst,src
-    if syntax == "att" and len(ops) == 2:
-        src, dst = ops[0], ops[1]
-    elif syntax == "intel" and len(ops) == 2:
-        dst, src = ops[0], ops[1]
+def _control_flow_hints(jumps: List[Dict[str, Any]]) -> List[str]:
+    if not jumps:
+        return ["No jumps detected → likely straight-line code (or jump targets not included)."]
+
+    out: List[str] = []
+    has_back = any(j.get("direction") == "backward" for j in jumps)
+    has_fwd = any(j.get("direction") == "forward" for j in jumps)
+    has_table = any(j.get("kind") == "jumptable" for j in jumps)
+
+    if has_table:
+        out.append("Indirect `jmp`/jump-table pattern → likely a `switch`.")
+    if has_back:
+        out.append("Backward jump (to an earlier label) → likely a loop (`while` / `for`).")
+    if has_fwd:
+        out.append("Forward conditional jump (skips code) → likely an `if`/guard.")
+
+    # Add a compact per-jump list for orientation.
+    for j in jumps[:6]:
+        m = j.get("mnemonic")
+        tgt = j.get("target")
+        direction = j.get("direction") or "?"
+        out.append(f"{m} → {tgt} ({direction})")
+    return out
+
+
+def _loop_iterator_hints(clean_lines: List[str], syn: str) -> List[str]:
+    # Heuristic: find registers that are incremented and later compared.
+    inc_regs: List[str] = []
+    cmp_regs: List[str] = []
+
+    if syn == "intel":
+        for s in clean_lines:
+            sl = s.lower()
+            if re.search(r"\b(inc|dec)\s+(e?[a-z]{2,3}|r\d+)\b", sl):
+                inc_regs.append(re.search(r"\b(inc|dec)\s+([a-z0-9]+)\b", sl).group(2))  # type: ignore[union-attr]
+            m = re.search(r"\b(add|sub)\s+([a-z0-9]+)\s*,\s*1\b", sl)
+            if m:
+                inc_regs.append(m.group(2))
+            m2 = re.search(r"\bcmp\s+([a-z0-9]+)\s*,", sl)
+            if m2:
+                cmp_regs.append(m2.group(1))
     else:
-        src = ops[0] if ops else None
-        dst = ops[1] if len(ops) > 1 else None
+        for s in clean_lines:
+            sl = s.lower()
+            # addl $1, %eax  | incq %rcx
+            m = re.search(r"\b(add|sub)[a-z]*\s+\$1\s*,\s*(%[a-z0-9]+)\b", sl)
+            if m:
+                inc_regs.append(m.group(2))
+            m2 = re.search(r"\binc[a-z]*\s+(%[a-z0-9]+)\b", sl)
+            if m2:
+                inc_regs.append(m2.group(1))
+            m3 = re.search(r"\bcmp[a-z]*\s+.*,\s*(%[a-z0-9]+)\b", sl)
+            if m3:
+                cmp_regs.append(m3.group(1))
 
-    return {
-        "mnemonic": m,
-        "operands": [o.__dict__ for o in ops],
-        "src": src.__dict__ if src else None,
-        "dst": dst.__dict__ if dst else None,
-    }
-
-
-def _explain(instr: Dict[str, Any]) -> str:
-    m = instr["mnemonic"]
-    src = instr.get("src")
-    dst = instr.get("dst")
-
-    def ot(o: Optional[Dict[str, Any]]) -> str:
-        return o["text"] if o else ""
-
-    if m in ("mov", "movl", "movq", "movb", "movw"):
-        return f"Copy {ot(src)} into {ot(dst)}."
-    if m == "lea":
-        return f"Compute address/value {ot(src)} and store in {ot(dst)} (no memory load)."
-    if m in ("add", "addl", "addq"):
-        return f"{ot(dst)} = {ot(dst)} + {ot(src)}."
-    if m in ("sub", "subl", "subq"):
-        return f"{ot(dst)} = {ot(dst)} - {ot(src)}."
-    if m in ("imul", "imull", "imulq"):
-        return f"{ot(dst)} = {ot(dst)} * {ot(src)} (signed multiply, heuristic)."
-    if m in ("xor", "xorl", "xorq"):
-        if src and dst and src["kind"] == "reg" and dst["kind"] == "reg" and src["base"] == dst["base"]:
-            return f"Zero {ot(dst)} (xor reg, reg)."
-        return f"{ot(dst)} = {ot(dst)} XOR {ot(src)}."
-    if m in ("and", "andl", "andq"):
-        return f"{ot(dst)} = {ot(dst)} AND {ot(src)}."
-    if m in ("or", "orl", "orq"):
-        return f"{ot(dst)} = {ot(dst)} OR {ot(src)}."
-    if m in ("shl", "sal", "shll", "salq", "shr", "sar"):
-        return f"Shift {ot(dst)} by {ot(src)}."
-    if m in ("cmp", "cmpl", "cmpq", "test"):
-        return f"Update flags based on {ot(dst)} vs {ot(src)} (no direct assignment)."
-    if m.startswith("j"):
-        return f"Conditional jump to {instr['operands'][0]['text'] if instr.get('operands') else '?'} based on flags."
-    if m in ("push",):
-        return f"Push {ot(src) or (instr['operands'][0]['text'] if instr.get('operands') else '?')} onto stack."
-    if m in ("pop",):
-        return f"Pop stack value into {ot(src) or (instr['operands'][0]['text'] if instr.get('operands') else '?')}."
-    if m in ("call",):
-        return f"Call function at {instr['operands'][0]['text'] if instr.get('operands') else '?'} (push return address)."
-    if m in ("ret", "retq"):
-        return "Return from function (pop return address into RIP)."
-    return "Instruction not specifically recognized; shown verbatim."
-
-
-def _pseudocode(lines: List[Dict[str, Any]]) -> Tuple[str, List[str]]:
-    warnings: List[str] = []
+    inc = sorted(set(inc_regs))
+    cmpd = sorted(set(cmp_regs))
     out: List[str] = []
-    for li in lines:
-        instr = li.get("instruction")
-        if not instr:
-            continue
-        m = instr["mnemonic"]
-        src = instr.get("src")
-        dst = instr.get("dst")
-
-        def expr(o: Optional[Dict[str, Any]]) -> str:
-            if not o:
-                return "<?>"
-            if o["kind"] == "reg":
-                return o.get("base") or o["text"]
-            if o["kind"] == "imm":
-                return str(o.get("disp") if o.get("disp") is not None else o["text"])
-            if o["kind"] == "mem":
-                base = o.get("base")
-                index = o.get("index")
-                scale = o.get("scale")
-                disp = o.get("disp") or 0
-                terms = []
-                if base:
-                    terms.append(base)
-                if index:
-                    terms.append(f"{index}*{scale or 1}")
-                if disp:
-                    terms.append(f"{disp:+d}")
-                inside = " + ".join(terms) if terms else "0"
-                return f"*({inside})"
-            return o["text"]
-
-        if m in ("mov", "movl", "movq", "movb", "movw"):
-            out.append(f"{expr(dst)} = {expr(src)};")
-        elif m == "lea":
-            # LEA is tricky; we display address expression, not deref.
-            if src and src["kind"] == "mem":
-                base = src.get("base")
-                index = src.get("index")
-                scale = src.get("scale")
-                disp = src.get("disp") or 0
-                terms = []
-                if base:
-                    terms.append(base)
-                if index:
-                    terms.append(f"{index}*{scale or 1}")
-                if disp:
-                    terms.append(f"{disp:+d}")
-                addr = " + ".join(terms) if terms else "0"
-                out.append(f"{expr(dst)} = ({addr});  // lea")
-            else:
-                out.append(f"{expr(dst)} = {expr(src)};  // lea (heuristic)")
-                warnings.append("Some lea operands weren't recognized as address expressions.")
-        elif m in ("add", "addl", "addq"):
-            out.append(f"{expr(dst)} += {expr(src)};")
-        elif m in ("sub", "subl", "subq"):
-            out.append(f"{expr(dst)} -= {expr(src)};")
-        elif m in ("imul", "imull", "imulq"):
-            out.append(f"{expr(dst)} *= {expr(src)};")
-        elif m in ("xor", "xorl", "xorq") and src and dst and src.get("kind") == "reg" and dst.get("kind") == "reg" and src.get("base") == dst.get("base"):
-            out.append(f"{expr(dst)} = 0;")
-        elif m in ("cmp", "cmpl", "cmpq", "test"):
-            out.append(f"// compare/test: affects flags ({expr(dst)} ? {expr(src)})")
-        elif m.startswith("j"):
-            out.append(f"// {m} {expr(instr['operands'][0]) if instr.get('operands') else '<?>'}")
-        elif m in ("ret", "retq"):
-            out.append("return;")
-        elif m == "call":
-            target = instr["operands"][0]["text"] if instr.get("operands") else "<?>"
-            out.append(f"{target}();")
+    if inc:
+        out.append("Iterator candidates (being incremented/decremented): " + ", ".join(inc[:6]))
+    if cmpd:
+        out.append("Condition registers seen in `cmp`: " + ", ".join(cmpd[:6]))
+    if inc and cmpd:
+        common = [r for r in inc if r in cmpd]
+        if common:
+            out.append("Strong iterator guess (both updated + compared): " + ", ".join(common[:4]))
         else:
-            out.append(f"// {m} " + ", ".join(o["text"] for o in instr.get("operands", [])))
+            out.append("If the iterator isn't compared directly, it may index memory while a different reg holds the bound.")
+    if not out:
+        out.append("Loop iterator not obvious; look for `add/inc` on a register near a backward jump, then the nearby `cmp` that feeds the jump.")
+    return out
 
-    return "\n".join(out).strip() + ("\n" if out else ""), warnings
+
+def _memory_hints(clean_lines: List[str]) -> List[str]:
+    scales: List[int] = []
+    disp_bytes: List[int] = []
+    for s in clean_lines:
+        if not _mentions_mem(s):
+            continue
+        scales.extend(_find_scales(s))
+        # displacement like 8(%rdi) or [rdi+8]
+        for m in re.finditer(r"\b(-?\d+)\s*\(", s):
+            try:
+                disp_bytes.append(int(m.group(1)))
+            except ValueError:
+                pass
+        for m in re.finditer(r"\[\s*[a-z0-9]+\s*([\+\-]\s*\d+)\s*\]", s.lower()):
+            try:
+                disp_bytes.append(int(m.group(1).replace(" ", "")))
+            except ValueError:
+                pass
+
+    out: List[str] = []
+    out.extend(_scale_type_hints(scales))
+    if disp_bytes:
+        ds = sorted(set(disp_bytes))
+        out.append("Displacements seen (bytes): " + ", ".join(str(x) for x in ds[:8]))
+        out.append("Byte displacement often means `base->field` or `&arr[k]` offset; combine with scale to decide which.")
+    if not out:
+        out.append("No memory addressing patterns recognized (or snippet is register-only).")
+    return out
 
 
-def run(input: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Translate x86-64 assembly snippets into pseudocode + explanations.
-
-    Parameters in `input`:
-      - asm (str): required assembly text
-      - syntax (str): "att" | "intel" | "auto" (default "auto")
-      - include_pseudocode (bool): default True
-      - max_instructions (int): default 200
-    """
-    asm = (input or {}).get("asm")
-    if not isinstance(asm, str) or not asm.strip():
-        return {
-            "ok": False,
-            "syntax": None,
-            "instructions": [],
-            "line_map": [],
-            "pseudocode": "",
-            "assumptions": [],
-            "warnings": [],
-            "errors": ["Missing required string input['asm']."],
-        }
-
-    syntax_req = (input or {}).get("syntax", "auto")
-    include_pseudo = bool((input or {}).get("include_pseudocode", True))
-    max_instructions = int((input or {}).get("max_instructions", 200))
-    if max_instructions <= 0:
-        max_instructions = 200
-
-    syntax = _detect_syntax(asm) if syntax_req == "auto" else str(syntax_req).lower()
-    if syntax not in ("att", "intel"):
-        syntax = _detect_syntax(asm)
-
-    assumptions: List[str] = [
-        "Heuristic translation intended for teaching (not a full decompiler).",
-        "x86-64 target assumed; calling convention details may be omitted.",
+def _kernel_hints(clean_lines: List[str]) -> List[str]:
+    ops: List[str] = []
+    for s in clean_lines:
+        parts = s.split(None, 1)
+        if not parts:
+            continue
+        op = _lower_mnemonic(parts[0])
+        if op in {"add", "sub", "imul", "mul", "idiv", "and", "or", "xor", "shl", "shr", "sar"}:
+            ops.append(op)
+        if op in {"lea"}:
+            ops.append(op)
+    if not ops:
+        return ["Kernel: mostly moves/branches/calls; focus on what values flow into EAX/RAX (return) or memory stores."]
+    uniq = ", ".join(sorted(set(ops)))
+    return [
+        "Kernel ops spotted: " + uniq,
+        "Translate each arithmetic op into a C operator on the destination variable; `lea` often means address math like `base + i*scale + disp`.",
     ]
-    warnings: List[str] = []
-    errors: List[str] = []
 
-    line_map: List[Dict[str, Any]] = []
-    instructions: List[Dict[str, Any]] = []
-    inst_count = 0
 
-    for raw in asm.splitlines():
-        stripped = _strip_comments(raw)
-        if not stripped:
-            line_map.append({"raw": raw, "kind": "blank_or_comment"})
+def run(inp: Dict[str, Any]) -> Dict[str, Any]:
+    asm = (inp or {}).get("asm")
+    if not isinstance(asm, str) or not asm.strip():
+        return {"ok": False, "syntax": None, "errors": ["Missing input['asm'] (string)."]}
+
+    syn = _syntax(asm)
+    raw_lines = asm.splitlines()
+
+    labels: Dict[str, int] = {}
+    clean_lines: List[str] = []
+    tokens: List[Dict[str, Any]] = []
+
+    for idx, raw in enumerate(raw_lines):
+        s = _strip_comment(raw)
+        if not s:
             continue
-        if _RE_LABEL.match(stripped):
-            line_map.append({"raw": raw, "kind": "label", "label": stripped[:-1]})
+        if s.endswith(":"):
+            labels[s[:-1].strip()] = len(tokens)
             continue
+        parts = s.split(None, 1)
+        mnem = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+        tokens.append({"i": len(tokens), "raw": raw, "s": s, "mnem": mnem, "rest": rest})
+        clean_lines.append(s)
 
-        # Tokenize: mnemonic then operands.
-        parts = stripped.split(None, 1)
-        mnemonic = parts[0]
-        ops_s = parts[1] if len(parts) > 1 else ""
-        ops_text = _split_operands(ops_s) if ops_s else []
-        ops = [_parse_operand(o, syntax) for o in ops_text]
-        instr = _normalize_instruction(mnemonic, ops, syntax)
-        expl = _explain(instr)
+    jumps: List[Dict[str, Any]] = []
+    for t in tokens:
+        m0 = _lower_mnemonic(str(t["mnem"]))
+        rest = str(t["rest"]).strip()
+        if m0 == "jmp":
+            # Indirect jump often shows up as jmp [..] or jmp *%rax
+            if "*" in rest or "[" in rest:
+                jumps.append({"kind": "jumptable", "mnemonic": "jmp", "target": rest, "direction": None})
+            elif rest:
+                jumps.append({"kind": "jmp", "mnemonic": "jmp", "target": rest, "direction": None})
+            continue
+        if m0 in _JCC:
+            target = rest.split(None, 1)[0] if rest else ""
+            direction = None
+            if target in labels:
+                direction = "backward" if labels[target] < int(t["i"]) else "forward"
+            jumps.append({"kind": "jcc", "mnemonic": m0, "target": target or rest or "?", "direction": direction})
 
-        line_map.append(
-            {
-                "raw": raw,
-                "kind": "instruction",
-                "instruction": instr,
-                "explanation": expl,
-            }
-        )
-        instructions.append(instr)
-        inst_count += 1
-        if inst_count >= max_instructions:
-            warnings.append(f"Stopped after {max_instructions} instructions (max_instructions cap).")
-            break
-
-    pseudo = ""
-    if include_pseudo:
-        pseudo, pseudo_warnings = _pseudocode(line_map)
-        warnings.extend(pseudo_warnings)
+    checklist: List[Dict[str, Any]] = [
+        {"step": "Define function signature", "hints": [_arg_map_hint(), _guess_ret_type_hint(clean_lines, syn)]},
+        {"step": "Determine data types via scale", "hints": _memory_hints(clean_lines)},
+        {"step": "Identify the skeleton (control flow)", "hints": _control_flow_hints(jumps)},
+        {"step": "Locate the loop iterator", "hints": _loop_iterator_hints(clean_lines, syn)},
+        {
+            "step": "Decode memory addressing",
+            "hints": [
+                "Intel: `[rdi + rdx*4]` → `arg0[arg2]`-style (base + index*scale).",
+                "Displacement like `8[rdi]` / `[rdi+8]` often means `ptr->field` or `&arr[1]` depending on element size.",
+            ],
+        },
+        {"step": "Trace the logical kernel", "hints": _kernel_hints(clean_lines)},
+        {
+            "step": "Refactor for readability",
+            "hints": [
+                "Combine `cmp` + conditional jump into a clean `if (...)` or loop condition.",
+                "If you see a backward `jcc`, rewrite as `while (...) { ...; i++; }` (or a `for` if init/update are adjacent).",
+            ],
+        },
+    ]
 
     return {
-        "ok": len(errors) == 0,
-        "syntax": syntax,
-        "instructions": instructions,
-        "line_map": line_map,
-        "pseudocode": pseudo,
-        "assumptions": assumptions,
-        "warnings": warnings,
-        "errors": errors,
+        "ok": True,
+        "syntax": syn,
+        "checklist": checklist,
+        "detected": {
+            "labels": list(labels.keys())[:12],
+            "jump_count": len(jumps),
+            "memory_scale_examples": _find_scales("\n".join(clean_lines))[:8],
+        },
+        "errors": [],
     }
