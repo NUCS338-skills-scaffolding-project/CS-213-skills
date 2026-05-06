@@ -15,24 +15,24 @@ python_entry: "logic.py"
 version: "0.1.0"
 ---
 
-# Execution Trace (simple)
+# Execution Trace
 
 ## Description
 
-Steps **Intel-style** `mov`, `add`, `sub`, `push`, `pop` on 64-bit registers and `qword ptr [reg±disp]` memory.
+Produces a step-by-step execution trace for small x86-64 snippets, showing register/memory state before and after each instruction. It’s designed for hand-tracing practice (not full emulation), focusing on a limited set of common Intel-syntax instructions.
 
 ## When to Trigger
 
-- Small hand-trace homework snippets.
+- Student needs help hand-tracing a short assembly snippet.
+- Student asks how a few instructions change registers/memory over time.
 
 ## Inputs
 
-- `asm` (str, required)
-- `initial_state` (optional): `{"regs": {...}, "mem": {...}}`
+Describe what inputs the function expects.
 
 ## Outputs
 
-- `ok`, `steps` (each with `before` / `after` / optional `error`, plus `delta` + `delta_summary`), `final_state`, `errors`.
+Describe what the function returns.
 
 ## Usage
 
@@ -40,7 +40,3 @@ Steps **Intel-style** `mov`, `add`, `sub`, `push`, `pop` on 64-bit registers and
 from logic import run
 print(run({"asm": "mov rax, 5\nadd rax, 3\n", "initial_state": {"regs": {"rsp": 0x1000}}}))
 ```
-
-## Notes
-
-Unsupported instructions stop the trace with `ok: false`.

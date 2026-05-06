@@ -1,12 +1,11 @@
 ---
-skill_id: "c-debugging"
-name: "C Debugging Triage"
+skill_id: "c-debugger"
+name: "C Debugger"
 skill_type: "code"
 tags: ["c", "debugging", "cs213"]
 course_types: ["cs"]
 learning_goal_tags:
   - "debug-systematically"
-  - "handle-edge-cases"
 trigger_signals:
   - "compile-error"
   - "segfault"
@@ -16,24 +15,24 @@ python_entry: "logic.py"
 version: "0.1.0"
 ---
 
-# C Debugging Triage
+# C Debugger
 
 ## Description
 
-Pattern-matches common C/systems bugs (segfaults, format strings, heap issues) and returns ranked guesses plus a readable `message`. The guidance is **hint-driven** (TA-style): it avoids pinpointing an exact line/function as “the bug” and instead suggests what to inspect and how to narrow it down.
+Helps students debug C issues (compile errors, runtime errors, segfaults) by turning symptoms and output into a short, systematic triage plan. It provides likely root causes plus targeted questions and next steps rather than claiming a single definitive “bug line.”
 
 ## When to Trigger
 
-- Student shares C code and/or compiler or runtime output.
+- Student shares C code and compiler/runtime output and asks “what’s wrong?”
+- Student reports a segfault or mysterious runtime behavior and needs a debugging plan.
 
-## Inputs (all optional, need at least one)
+## Inputs
 
-- `c_code`, `compiler_output`, `runtime_output`, `symptoms`
-- `constraints.tools_allowed`: e.g. `["gdb", "asan", "valgrind"]`
+Describe what inputs the function expects.
 
 ## Outputs
 
-- `ok`, `likely_root_causes`, `questions_to_ask`, `next_steps`, `message`, `errors`
+Describe what the function returns.
 
 ## Usage
 

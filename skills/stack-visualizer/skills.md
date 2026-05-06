@@ -15,25 +15,24 @@ python_entry: "logic.py"
 version: "0.1.0"
 ---
 
-# Stack Visualizer (simple)
+# Stack Visualizer
 
 ## Description
 
-Shows qword stack slots from `rsp` through a small window, with optional `rbp`-relative labels (`saved_rbp`, `return_address`, `local[...]`).
+Visualizes a slice of the stack around `rsp` (and optionally `rbp`) to help students understand stack frames and calling convention conventions. It formats addresses and qword values into a readable view and can add helpful labels (e.g., saved `rbp`, return address, locals) when enough context is provided.
 
 ## When to Trigger
 
-- Explain stack layout from known `rsp`/`rbp` and memory.
+- Student is confused about `rsp`/`rbp` and stack frame layout.
+- Student wants to interpret a stack memory dump around `rsp`.
 
 ## Inputs
 
-- `regs` (dict): at least `rsp`; optional `rbp`
-- `mem` (dict, optional): address → qword value
-- `word_size`, `max_slots`, `label_hints` (optional)
+Describe what inputs the function expects.
 
 ## Outputs
 
-- `ok`, `frame`, `slots`, `table_md` (markdown table), `warnings`, `errors`
+Describe what the function returns.
 
 ## Usage
 
