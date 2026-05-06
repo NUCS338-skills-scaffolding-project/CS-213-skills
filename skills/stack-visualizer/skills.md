@@ -1,9 +1,18 @@
 ---
-skill_id: "stack_visualizer"
-name: "Stack Visualizer (simple)"
+skill_id: "stack-visualizer"
+name: "Stack Visualizer"
 skill_type: "code"
 tags: ["stack", "cs213"]
+course_types: ["cs"]
+learning_goal_tags:
+  - "trace-execution"
+  - "specify-io"
+trigger_signals:
+  - "stack-layout-question"
+  - "rsp-rbp-confusion"
+chip_icon: "📚"
 python_entry: "logic.py"
+version: "0.1.0"
 ---
 
 # Stack Visualizer (simple)

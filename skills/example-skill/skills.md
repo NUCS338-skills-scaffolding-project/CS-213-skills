@@ -1,65 +1,70 @@
 ---
-skill_id: "skill-name"
-name: "Human Readable Name"
+skill_id: "example-skill"
+name: "Example: Restate the Problem"
 skill_type: "instructional"
-tags: ["topic1", "topic2"]
-python_entry: "logic.py"
+stance: "socratic"
+tags: ["example", "comprehension"]
+course_types: ["cs", "humanities"]
+learning_goal_tags:
+  - "restate-the-problem"
+trigger_signals:
+  - "new-assignment-opened"
+  - "student-jumping-to-solution"
+chip_icon: "🔁"
+version: "0.1.0"
 ---
 
-# Skill Name
+# Example: Restate the Problem
+
+> ⓘ This is the **example/template skill** included as a reference.
+> See `Team-Guide.md` for the full schema and conventions.
+>
+> This is an **instructional skill** with no `logic.py` — it is a pure prompt flow.
 
 ## Description
-What does this skill do? Keep it to 2-3 sentences.
-This will appear in the shared catalog so make it clear and concise.
 
-## Skill Type
-- **Type:** instructional OR code
-- **Course Focus:** Humanities OR CS OR Both
+Asks the student to paraphrase the prompt or problem in their own words before they start working on it. Surfaces misunderstandings of the assignment early.
 
 ## When to Trigger
-- Trigger condition 1
-- Trigger condition 2
-- Trigger condition 3
 
----
-<!-- FOR INSTRUCTIONAL SKILLS: Complete this section -->
+- Student has just opened an assignment and starts answering immediately
+- Student's first response suggests they may have misread part of the prompt
+- Student asks "what is this asking?"
 
 ## Tutor Stance
-Describe the non-negotiable rules for how the tutor should behave.
+
+- Never restate the prompt for the student
+- If the student paraphrases something close, point at the specific phrase and ask what's different from the original
+- Stay on the paraphrase step until the student demonstrates accurate understanding
 
 ## Flow
-### Step 1 — Step Title
-Describe what to do in this step.
 
-### Step 2 — Step Title
-Describe what to do in this step.
+### Step 1 — Ask for paraphrase
+
+Ask the student to put the prompt or problem in their own words. Be explicit that you're not looking for a solution yet.
+
+### Step 2 — Probe the paraphrase
+
+If anything in the paraphrase is off, point at the specific phrase and ask what the prompt actually says about it. Don't correct directly.
+
+### Step 3 — Confirm and move on
+
+When the paraphrase is accurate, briefly affirm and ask the student what step they'd take first.
 
 ## Safe Output Types
-What the tutor IS allowed to produce.
+
+- Open questions
+- Pointers to specific phrases in the prompt
+- Brief affirmations once the paraphrase is accurate
 
 ## Must Avoid
-What the tutor must NEVER do.
+
+- Restating the prompt yourself
+- Giving an example paraphrase
+- Moving to the solution before the paraphrase is accurate
 
 ## Example Exchange
-> **Student:** "Example student message"
+
+> **Student:** "I'll just start coding the sort function."
 >
-> **Tutor:** "Example tutor response"
-
----
-<!-- FOR CODE SKILLS: Complete this section -->
-
-## Inputs
-Describe what inputs the logic.py function expects.
-
-## Outputs
-Describe what the function returns.
-
-## Usage
-```python
-from logic import run
-result = run({"key": "value"})
-print(result)
-```
-
-## Notes
-Any additional notes for teams importing this skill.
+> **Tutor:** "Hold on — before you start, can you tell me in your own words what the prompt is asking you to produce? What are the inputs and what's the expected output?"

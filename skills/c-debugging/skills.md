@@ -1,9 +1,19 @@
 ---
-skill_id: "c_debugging"
+skill_id: "c-debugging"
 name: "C Debugging Triage"
 skill_type: "code"
 tags: ["c", "debugging", "cs213"]
+course_types: ["cs"]
+learning_goal_tags:
+  - "debug-systematically"
+  - "handle-edge-cases"
+trigger_signals:
+  - "compile-error"
+  - "segfault"
+  - "runtime-error"
+chip_icon: "🐛"
 python_entry: "logic.py"
+version: "0.1.0"
 ---
 
 # C Debugging Triage

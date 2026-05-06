@@ -1,9 +1,18 @@
 ---
-skill_id: "execution_trace"
-name: "Execution Trace (simple)"
+skill_id: "execution-trace"
+name: "Execution Trace"
 skill_type: "code"
 tags: ["assembly", "trace", "cs213"]
+course_types: ["cs"]
+learning_goal_tags:
+  - "trace-execution"
+  - "identify-invariants"
+trigger_signals:
+  - "hand-trace-needed"
+  - "register-state-question"
+chip_icon: "📋"
 python_entry: "logic.py"
+version: "0.1.0"
 ---
 
 # Execution Trace (simple)
