@@ -1,9 +1,18 @@
 ---
-skill_id: "assembly_translation"
-name: "Assembly Translation (simple)"
+skill_id: "asm-translation"
+name: "Assembly Translation"
 skill_type: "code"
 tags: ["assembly", "x86-64", "cs213"]
+course_types: ["cs"]
+learning_goal_tags:
+  - "trace-execution"
+  - "decompose-problems"
+trigger_signals:
+  - "student-reading-assembly"
+  - "asm-to-c-question"
+chip_icon: "🔤"
 python_entry: "logic.py"
+version: "0.1.0"
 ---
 
 # Assembly Translation (TA-style)

@@ -1,5 +1,5 @@
 course_id: "CS-213"
 course_name: "Intro to Computer Systems"
-course_type: "CS"
-spoc_contact: "nikos@northwestern.edu" : 
-skills_used: ["c_debugging, assembly_translation, execution_trace, stack_visualizer"]
+course_type: "cs"
+spoc_contact: "nikos@northwestern.edu"
+skills_used: []
