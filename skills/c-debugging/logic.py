@@ -44,8 +44,13 @@ def _format_message(
     errors: List[str],
 ) -> str:
     if errors:
-        lines = ["## Debugging result", "", "**Status**: I’m missing a bit of info to narrow this down.", ""]
-        lines.append("### What I need from you")
+        lines = [
+            "## Debugging hints (not a fix or line number)",
+            "",
+            "**Status**: Need a bit more context to suggest angles.",
+            "",
+        ]
+        lines.append("### What to paste next")
         for e in errors:
             lines.append(f"- {e}")
         if questions_to_ask:
@@ -53,38 +58,42 @@ def _format_message(
                 lines.append(f"- {q}")
         return "\n".join(lines).rstrip() + "\n"
 
-    lines: List[str] = ["## Debugging result", "", "**Best guess (based on what you shared)**:"]
+    lines: List[str] = [
+        "## Debugging hints (hints only — confirm with your own checks)",
+        "",
+        "**First angle to explore** (ranked heuristic — not a diagnosis):",
+    ]
     if likely_root_causes:
         top = likely_root_causes[0]
         conf = top.get("confidence")
         conf_pct = f"{int(round(float(conf) * 100))}%" if isinstance(conf, (int, float)) else "?"
-        lines.append(f"- {top.get('title')} ({conf_pct} confidence)")
+        lines.append(f"- {top.get('title')} (relative weight {conf_pct} — still verify)")
 
         ev = top.get("evidence") or []
         if ev:
             lines.append("")
-            lines.append("### Why I think that")
+            lines.append("### What in your logs/code suggests looking here")
             for item in ev[:3]:
                 lines.append(f"- {item}")
 
         checks = top.get("what_to_check") or []
         if checks:
             lines.append("")
-            lines.append("### Quick things to check next")
+            lines.append("### Questions / checks for you to run")
             for item in checks[:4]:
                 lines.append(f"- {item}")
     else:
-        lines.append("- (Nothing clearly matches yet — but we can still debug this systematically.)")
+        lines.append("- (No strong pattern match in the snippet — use the steps below to narrow systematically.)")
 
     if next_steps:
         lines.append("")
-        lines.append("### Good next steps to try")
+        lines.append("### Process ideas (you choose what fits your setup)")
         for i, step in enumerate(next_steps[:6], start=1):
             lines.append(f"{i}. {step}")
 
     if questions_to_ask:
         lines.append("")
-        lines.append("### A couple quick questions (to narrow it down)")
+        lines.append("### Clarifying questions")
         for q in questions_to_ask[:5]:
             lines.append(f"- {q}")
 
@@ -97,11 +106,20 @@ def _format_message(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _pedagogy_meta() -> Dict[str, Any]:
+    return {
+        "intent": "c_debug_hints",
+        "hints_only": True,
+        "note": "Investigation angles and process steps — not line-level fixes or definitive root cause.",
+    }
+
+
 def run(input: Dict[str, Any]) -> Dict[str, Any]:
     """
-    CS-213 style C debugging triage.
+    CS-213 style C debugging triage — hint-oriented.
 
-    This function is intentionally heuristic: it ranks common root causes and emits concrete next steps.
+    Ranks *investigation angles* and process steps. Callers/agents must not treat output as
+    “the bug” or “the fix”; students still locate the issue and decide changes themselves.
     """
     c_code = _as_text((input or {}).get("c_code"))
     compiler_output = _as_text((input or {}).get("compiler_output"))
@@ -121,6 +139,7 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
     if not blob:
         return {
             "ok": False,
+            "pedagogy": _pedagogy_meta(),
             "likely_root_causes": [],
             "questions_to_ask": ["Can you paste the C code and the exact compiler/runtime output (copy/paste is perfect)?"],
             "next_steps": [],
@@ -141,28 +160,37 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
     if _contains_any(compiler_output, ["implicit declaration", "incompatible implicit declaration", "implicit-int"]):
         likely.append(
             _make_hypothesis(
-                "Missing header / wrong function prototype",
+                "Prototype / header consistency",
                 0.75,
                 ["Compiler mentions implicit declaration / prototype mismatch."],
-                ["Include the correct header (e.g., <string.h>, <stdlib.h>)", "Ensure function signatures match (args + return type)."],
+                [
+                    "Which header declares the function you’re calling, and does your call’s arity/types match that declaration?",
+                    "If you comment out the call temporarily, does the warning move — what does that tell you about where the mismatch lives?",
+                ],
             )
         )
     if _contains_any(compiler_output, ["format specifies type", "format '%", "warning: format", "printf"]):
         likely.append(
             _make_hypothesis(
-                "printf/scanf format string mismatch",
+                "Format string vs actual argument types",
                 0.7,
                 ["Compiler warns about format specifier/type mismatch."],
-                ["Match specifiers: %d(int), %ld(long), %p(void*), %zu(size_t)", "For pointers use %p with (void*)ptr cast."],
+                [
+                    "Walk each `%...` left-to-right: what type is the matching argument? Where might they disagree?",
+                    "For pointer arguments, what would you need to print for the type to be honest with `%p`?",
+                ],
             )
         )
     if _contains_any(compiler_output, ["control reaches end of non-void function", "non-void function does not return"]):
         likely.append(
             _make_hypothesis(
-                "Missing return in non-void function",
+                "All paths return a value (non-void function)",
                 0.65,
                 ["Compiler warns non-void function may not return."],
-                ["Ensure all paths return a value", "Add a default return at end only if logically correct."],
+                [
+                    "Trace each return path: is there any branch that falls off the end without returning?",
+                    "What would a sensible return be on the “missing” path — or is the control flow itself incomplete?",
+                ],
             )
         )
 
@@ -174,25 +202,25 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
         if re.search(r"\bNULL\b", c_code) and re.search(r"\*\s*\w+", c_code):
             likely.append(
                 _make_hypothesis(
-                    "NULL pointer dereference",
+                    "Pointer validity before `*` (null is one case)",
                     0.8,
-                    evidence + ["Code contains NULL and a dereference pattern."],
+                    evidence + ["Snippet shows NULL and a dereference-shaped use of a pointer."],
                     [
-                        "Before any dereference, confirm the pointer has been assigned a valid address (from `malloc`, or the address of an in-scope object).",
-                        "If NULL is a possible state, decide what behavior should happen in that case (return an error, skip work, etc.).",
+                        "Immediately before the crashing dereference: where could that pointer’s value have been set, and can it still be NULL?",
+                        "If NULL is allowed by the design, what should the function do instead of dereferencing?",
                     ],
                 )
             )
         else:
             likely.append(
                 _make_hypothesis(
-                    "Invalid pointer dereference (null/uninitialized/out-of-bounds)",
+                    "Bad value used at a dereference or indexing site",
                     0.65,
                     evidence,
                     [
-                        "Use a backtrace to identify the call path leading to the crash (don’t jump to conclusions from one frame).",
-                        "Right before the crash, inspect the *values* of pointers/indices involved in the dereference (are they NULL? uninitialized? out of range?).",
-                        "If arrays are involved, sanity-check index bounds and the allocated length/capacity.",
+                        "From a backtrace, which *expression* is the crash on — what values can that pointer or index take one step earlier?",
+                        "How would you tell apart NULL vs uninitialized vs out-of-bounds from evidence (print, gdb `print`, sanitizer) without assuming?",
+                        "If there’s an array: what relationship must hold between index and size for this access to be valid?",
                     ],
                 )
             )
@@ -200,30 +228,39 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
     if _contains_any(blob, ["use-after-free", "invalid read", "invalid write", "heap-use-after-free", "double free", "corrupted"]):
         likely.append(
             _make_hypothesis(
-                "Heap misuse (use-after-free / double-free / invalid free)",
+                "Heap lifetime / pairing (free vs use)",
                 0.8,
                 ["Tool/runtime output suggests invalid heap access/free."],
-                ["Ensure each malloc has exactly one free", "Set pointers to NULL after free and avoid dereferencing freed pointers."],
+                [
+                    "Can you draw the allocation points and every path that reaches `free` — is there a path that uses storage after it might have been freed?",
+                    "What invariant do you want about each pointer after `free` — how would you enforce it in the code you have?",
+                ],
             )
         )
 
     if _contains_any(blob, ["stack smashing", "stack-smashing detected", "*** stack smashing detected ***", "buffer overflow"]):
         likely.append(
             _make_hypothesis(
-                "Stack buffer overflow",
+                "Writes past the end of a stack buffer",
                 0.85,
                 ["Runtime indicates stack smashing/buffer overflow."],
-                ["Check fixed-size arrays and string ops (strcpy/gets/sprintf)", "Use bounded functions and validate lengths."],
+                    [
+                        "Which locals are fixed-size buffers, and which operations write into them — how is the bound known at compile time vs run time?",
+                        "What would you compare (intended length vs buffer size) before trusting a copy or format into that buffer?",
+                    ],
             )
         )
 
     if _contains_any(blob, ["uninitialized", "conditional jump", "may be used uninitialized"]):
         likely.append(
             _make_hypothesis(
-                "Uninitialized variable used",
+                "Read before write on a local or branch",
                 0.7,
                 ["Output mentions uninitialized use."],
-                ["Initialize locals before reading", "In loops, ensure all paths assign before use."],
+                [
+                    "For the variable the compiler names: list every path that reaches a read — is there a path where no write happened first?",
+                    "In a loop, is the first iteration special — could the read happen before the intended initialization?",
+                ],
             )
         )
 
@@ -231,30 +268,39 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
     if re.search(r"\bmalloc\s*\(", c_code) and not re.search(r"\bfree\s*\(", c_code):
         likely.append(
             _make_hypothesis(
-                "Memory leak (malloc without free)",
+                "malloc/free pairing on all paths (snippet heuristic)",
                 0.45,
                 ["malloc appears in code but free does not (in provided snippet)."],
-                ["Ensure every allocated block is freed on all control-flow paths", "Be careful with early returns and error handling."],
+                [
+                    "If this snippet is complete: walk each success and error return — does every allocated pointer still have a matching release story?",
+                    "What early returns or error branches might skip the cleanup you expect?",
+                ],
             )
         )
 
     if re.search(r"\bstrcpy\s*\(|\bstrcat\s*\(|\bsprintf\s*\(", c_code):
         likely.append(
             _make_hypothesis(
-                "Potential unsafe string operation (overflow risk)",
+                "Unbounded string write into a fixed buffer",
                 0.55,
                 ["Use of strcpy/strcat/sprintf detected."],
-                ["Prefer strncpy/strncat/snprintf with correct bounds", "Ensure destination buffer is large enough (including NUL byte)."],
+                [
+                    "What is the smallest destination size this call could need, and what is the actual buffer size?",
+                    "How would you express the copy so the maximum written bytes is never larger than the buffer minus NUL?",
+                ],
             )
         )
 
     if re.search(r"\bscanf\s*\(", c_code) and re.search(r"%s", c_code):
         likely.append(
             _make_hypothesis(
-                "scanf %s without width limit (overflow risk)",
+                "scanf `%s` and buffer size agreement",
                 0.55,
                 ["scanf with %s detected."],
-                ["Add width specifier: %Ns", "Prefer fgets then parse."],
+                [
+                    "What is the maximum number of non-whitespace characters that can land in your buffer — does `%s` cap that?",
+                    "What alternative input strategy would let you bound bytes read explicitly?",
+                ],
             )
         )
 
@@ -282,20 +328,21 @@ def run(input: Dict[str, Any]) -> Dict[str, Any]:
         next_steps.extend(
             [
                 "Start gdb: `gdb --args ./your_program ...` then type `run`.",
-                "If it crashes: run `bt` to see *where you are* in the call stack, then inspect locals/arguments in the current frame (e.g., `info locals`, `print ptr`, `print i`).",
+                "If it crashes: use `bt` to see the call stack, then in the frame where you stop, inspect the *values* involved in the faulting expression (`print`, `info locals`) — interpret what they imply.",
             ]
         )
     # Always useful regardless of tools.
     next_steps.extend(
         [
-            "Turn warnings on: compile with `-Wall -Wextra -g` and treat warnings as *leads* (they often correlate with the underlying issue).",
-            "If it’s a segfault: focus on the dereference/indexing operation that *uses* a bad value; verify the pointer/index is valid immediately before it’s used.",
+            "Turn warnings on: compile with `-Wall -Wextra -g` and treat each warning as a hypothesis to verify, not noise to silence.",
+            "For a segfault: identify the faulting expression from the tool output, then ask what must be true about each sub-value for that expression to be legal.",
         ]
     )
 
     likely_out = likely[:10]
     out = {
         "ok": True,
+        "pedagogy": _pedagogy_meta(),
         "likely_root_causes": likely_out,
         "questions_to_ask": questions,
         "next_steps": next_steps,

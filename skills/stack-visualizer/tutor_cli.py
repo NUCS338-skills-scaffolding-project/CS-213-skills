@@ -9,14 +9,14 @@ from typing import Any, Dict, List, Optional
 
 SYSTEM_PROMPT = """You are a friendly CS-213 interactive tutor.
 
-You are helping a student understand how the stack changes as x86-64 code runs.
+You help students understand how the stack is used and how rsp changes as x86-64 code runs.
 
 Guidelines:
-- Be conversational and supportive, but stay technically correct.
-- Prefer short explanations + concrete observations from the trace.
-- When you reference the stack, use rsp/rbp, offsets, and labels (saved_rbp, return_address, locals).
-- If the student is missing initial registers/memory, ask for it and suggest a reasonable default.
-- When uncertain, say what you assume (e.g., "Assuming Intel syntax" or "Assuming rsp starts at 0x1000").
+- Lead with questions and small hints; do not hand them the full numeric timeline as a finished answer unless they have already predicted step-by-step or explicitly ask to verify.
+- When the tool gives concrete rsp addresses or memory values, use them to ask “does this match what you drew?” rather than presenting them as the solution upfront.
+- Prefer Intel-syntax framing unless the student’s code is clearly AT&T (this tracer is Intel-style mov/add/sub/push/pop and rsp adjustments).
+- Ask them to locate where rsp changes, where qwords are written relative to rsp, and how that relates to saved rbp / return address / locals when rbp is meaningful.
+- If rsp or initial memory is missing, ask them to choose explicit test values (and why) before running a full trace.
 """
 
 
@@ -77,11 +77,30 @@ def _parse_json_dict(s: str) -> Dict[str, Any]:
 
 
 def _compact_timeline(out: Dict[str, Any], max_steps: int = 12, max_slots: int = 8) -> str:
+    hints = out.get("timeline_hints")
+    if isinstance(hints, list) and hints:
+        chunks: List[str] = ["(student_mode / hint scaffold — no numeric solution trace)", ""]
+        for h in hints[:max_steps]:
+            if not isinstance(h, dict):
+                continue
+            step = h.get("step")
+            asm = (h.get("asm") or "").strip()
+            chunks.append(f"step {step}: {asm}")
+            for r in h.get("stack_roles") or []:
+                chunks.append(f"  role: {r}")
+            for q in h.get("questions") or []:
+                chunks.append(f"  Q: {q}")
+            chunks.append("")
+        tmpl = out.get("visualization_template_md")
+        if isinstance(tmpl, str) and tmpl.strip():
+            chunks.append("empty ladder template:\n" + tmpl.strip())
+        return "\n".join(chunks).rstrip() + "\n"
+
     timeline = out.get("timeline") or []
     if not isinstance(timeline, list):
         return "(no timeline)"
 
-    chunks: List[str] = []
+    chunks = []
     for t in timeline[:max_steps]:
         if not isinstance(t, dict):
             continue
@@ -173,6 +192,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print("No asm set yet. Use /asm first.")
                 continue
 
+            use_student = os.environ.get("STACK_TUTOR_STUDENT_MODE", "1").strip() not in ("0", "false", "no")
             trace = sv.run(
                 {
                     "asm": asm,
@@ -180,15 +200,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "initial_state": state,
                     "max_steps": 80,
                     "max_slots": 14,
+                    "student_mode": use_student,
                 }
             )
             compact = _compact_timeline(trace, max_steps=12, max_slots=8)
 
             user_msg = (
-                "Here is the stack trace timeline for the student’s code.\n\n"
+                "Here is stack-focused context for the student’s assembly (hint-first by default).\n\n"
                 + compact
-                + "\nNow tutor the student: explain what happened to the stack, highlight saved rbp/return address/locals, "
-                + "and ask one good follow-up question."
+                + "\nTutor in short steps: have them predict rsp and one stack slot per instruction before revealing details. "
+                + "If they need verification, say they can rerun with numeric trace off-student-mode."
             )
             history.append({"role": "user", "parts": user_msg})
 
@@ -200,7 +221,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         # Free-form question: answer using last-known asm/state if present.
         if asm.strip():
-            trace = sv.run({"asm": asm, "syntax": "auto", "initial_state": state, "max_steps": 40, "max_slots": 12})
+            use_student = os.environ.get("STACK_TUTOR_STUDENT_MODE", "1").strip() not in ("0", "false", "no")
+            trace = sv.run(
+                {
+                    "asm": asm,
+                    "syntax": "auto",
+                    "initial_state": state,
+                    "max_steps": 40,
+                    "max_slots": 12,
+                    "student_mode": use_student,
+                }
+            )
             compact = _compact_timeline(trace, max_steps=8, max_slots=6)
             user_msg = f"Student question: {cmd}\n\nContext (timeline):\n{compact}"
         else:

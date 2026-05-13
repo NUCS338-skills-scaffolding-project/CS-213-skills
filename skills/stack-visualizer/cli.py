@@ -33,6 +33,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--initial", help="JSON dict for initial_state (e.g. '{\"regs\": {\"rsp\": 4096}, \"mem\": {}}')", default="")
     p.add_argument("--max-steps", type=int, default=200)
     p.add_argument("--max-slots", type=int, default=16)
+    p.add_argument(
+        "--student",
+        action="store_true",
+        help="Hint-only output (no numeric rsp/mem solution in timeline).",
+    )
     args = p.parse_args(argv)
 
     asm = _read_text(args.asm)
@@ -44,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
             "initial_state": initial_state,
             "max_steps": args.max_steps,
             "max_slots": args.max_slots,
+            "student_mode": args.student,
         }
     )
 
@@ -51,6 +57,20 @@ def main(argv: list[str] | None = None) -> int:
         for e in out.get("errors") or []:
             print("error:", e)
         return 2
+
+    if args.student:
+        hints = out.get("timeline_hints") or []
+        for h in hints:
+            step = h.get("step")
+            asm_line = (h.get("asm") or "").rstrip("\n")
+            print(f"\n--- step {step} (hints): {asm_line}")
+            for r in h.get("stack_roles") or []:
+                print(" ", r)
+            for q in h.get("questions") or []:
+                print(" Q:", q)
+        if out.get("visualization_template_md"):
+            print("\n" + str(out["visualization_template_md"]))
+        return 0
 
     timeline = out.get("timeline") or []
     for t in timeline:
@@ -60,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         rsp_b = ch.get("rsp_before")
         rsp_a = ch.get("rsp_after")
         mw = ch.get("mem_write")
+        mem_note = ch.get("mem_note")
         print(f"\n--- step {step}: {asm_line}")
         print(f"rsp: {hex(rsp_b) if isinstance(rsp_b, int) else rsp_b} -> {hex(rsp_a) if isinstance(rsp_a, int) else rsp_a}")
         if isinstance(mw, dict) and mw.get("kind") == "mem":
@@ -68,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
             addr_s = hex(addr) if isinstance(addr, int) else addr
             val_s = hex(val) if isinstance(val, int) else val
             print(f"mem_write: [{addr_s}] = {val_s}")
+        if mem_note:
+            print("note:", mem_note)
 
         slots = t.get("slots") or []
         for s in slots[: min(len(slots), 10)]:

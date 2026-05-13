@@ -1,4 +1,4 @@
-"""TA-style helper for Intel/AT&T x86-64 reading (teaching hints, not solutions)."""
+"""TA-style helper for Intel/AT&T x86-64 → C *structure* (hints only, never emits C source)."""
 from __future__ import annotations
 
 import re
@@ -285,6 +285,11 @@ def run(inp: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "ok": True,
         "syntax": syn,
+        "pedagogy": {
+            "intent": "assembly_to_c_hints",
+            "hints_only": True,
+            "note": "Structured hints for line-by-line or block-by-block translation; do not treat as a C solution.",
+        },
         "checklist": checklist,
         "detected": {
             "labels": list(labels.keys())[:12],

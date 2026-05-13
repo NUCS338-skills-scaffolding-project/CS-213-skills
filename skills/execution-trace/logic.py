@@ -1,7 +1,7 @@
 """Tiny step tracer: Intel-style mov/add/sub/push/pop on 64-bit regs + qword memory.
 
-Outputs are tutoring-oriented: each step includes a compact "delta" describing what changed,
-so a chatbot can guide a student step-by-step while tracking registers/memory.
+When used with students, prefer ``student_mode=True`` so JSON does not leak full after-states;
+the tutor still runs the same simulation internally to validate supported instructions.
 """
 from __future__ import annotations
 
@@ -87,6 +87,75 @@ def _reg_hex(regs: Dict[str, Any], name: str) -> str:
     return ""
 
 
+def _operand_label(op: str) -> str:
+    op = op.strip().rstrip(",").strip()
+    if re.fullmatch(r"-?0x[0-9a-f]+|-?\d+", op, re.I):
+        return f"immediate {op}"
+    if op.upper().startswith("QWORD") or op.startswith("["):
+        return f"memory {op.strip()}"
+    return f"register {_norm(op)}"
+
+
+def _scaffold_step(mn: str, ops: List[str], raw_asm: str) -> Dict[str, Any]:
+    """Symbolic reads/writes + Socratic prompts — no numeric state."""
+    mn = mn.lower()
+    reads: List[str] = []
+    writes: List[str] = []
+    hints: List[str] = []
+
+    if mn == "mov" and len(ops) == 2:
+        dst, src = ops[0], ops[1]
+        reads.append(_operand_label(src))
+        writes.append(_operand_label(dst))
+        hints.append("For `mov`, identify source vs destination: the destination becomes a copy of the source bits (subject to size rules you are modeling).")
+        hints.append("Predict the destination’s new value from your current state table before peeking at any solution.")
+    elif mn == "add" and len(ops) == 2:
+        dst, src = ops[0], ops[1]
+        reads.extend([_operand_label(dst), _operand_label(src)])
+        writes.append(_operand_label(dst))
+        hints.append("`add` reads both operands, then writes the sum into the destination. What are the two addends in *your* trace right now?")
+        hints.append("After you add, which single name holds the updated value?")
+    elif mn == "sub" and len(ops) == 2:
+        dst, src = ops[0], ops[1]
+        reads.extend([_operand_label(dst), _operand_label(src)])
+        writes.append(_operand_label(dst))
+        hints.append("`sub` updates the destination with (destination − source). What two values do you subtract?")
+    elif mn == "push" and len(ops) == 1:
+        reads.append(_operand_label(ops[0]))
+        reads.append("register rsp (implicit)")
+        writes.extend(["memory at new rsp", "register rsp"])
+        hints.append("`push` first adjusts `rsp`, then stores the pushed value at the new top of stack. In which order do those happen on x86-64?")
+        hints.append("What value do you intend to place on the stack, and what should `rsp` be immediately after?")
+    elif mn == "pop" and len(ops) == 1:
+        reads.extend(["memory at current rsp", "register rsp (implicit)"])
+        writes.append(_operand_label(ops[0]))
+        writes.append("register rsp")
+        hints.append("`pop` loads from the current stack top, then grows `rsp`. What word do you read from `[rsp]` first?")
+    else:
+        hints.append("Unsupported in this tracer model — treat as a black box or extend the tool; ask what operands *might* be touched.")
+
+    return {
+        "asm": raw_asm,
+        "mnemonic": mn,
+        "operands": ops,
+        "reads": reads,
+        "writes": writes,
+        "hint_questions": hints,
+    }
+
+
+def _pedagogy_meta(*, student_mode: bool) -> Dict[str, Any]:
+    return {
+        "intent": "execution_trace_hints" if student_mode else "execution_trace_full",
+        "hints_only": bool(student_mode),
+        "note": (
+            "Per-step scaffolds only — no simulated after-states. Tutor asks student to predict before moving on."
+            if student_mode
+            else "Full before/after included — do not paste wholesale to students as a finished trace; use line-by-line with student_mode for learners."
+        ),
+    }
+
+
 def _walkthrough_table_md(steps: List[Dict[str, Any]], *, max_steps: int = 12) -> str:
     """
     A compact markdown table so a tutor can point at Step N and track values.
@@ -160,10 +229,48 @@ def _write_op(op: str, val: int, regs: Dict[str, int], mem: Dict[int, int]) -> N
     regs[_norm(op)] = val
 
 
+def _input_setup_hints(asm: str, st: Dict[str, Any]) -> List[str]:
+    """Prompts for choosing initial registers/memory — no concrete values."""
+    hints: List[str] = []
+    regs = (st.get("regs") or {}) if isinstance(st, dict) else {}
+    if not isinstance(regs, dict):
+        regs = {}
+    rk = {str(k).lower() for k in regs.keys()}
+    mem = (st.get("mem") or {}) if isinstance(st, dict) else {}
+    has_mem = isinstance(mem, dict) and bool(mem)
+
+    a = asm.lower()
+    for reg, label in (("rdi", "first argument"), ("rsi", "second argument"), ("rdx", "third argument")):
+        if re.search(rf"\b{re.escape(reg)}\b", a) and reg not in rk:
+            hints.append(
+                f"The snippet mentions `{reg}` ({label} in the SysV 64-bit convention). "
+                "What test value do you want to assume there, and what are you trying to learn from that choice?"
+            )
+    if re.search(r"\bpush\b|\bpop\b", a):
+        hints.append("`push`/`pop` change `rsp` and memory at the stack top — pick a starting `rsp` aligned with the qword slots you will read/write, and say what you expect on the stack before the first `pop` (if any).")
+
+    if has_mem:
+        hints.append("You provided some modeled memory — for each address you care about, what invariant should hold across the trace?")
+
+    if not hints:
+        hints.append(
+            "Before the first instruction, write down the registers and memory words this code reads. "
+            "Assign only the inputs you must; leave the rest explicit as “unknown” until a later line defines them."
+        )
+    return hints
+
+
 def run(inp: Dict[str, Any]) -> Dict[str, Any]:
+    student_mode = bool((inp or {}).get("student_mode"))
     asm = (inp or {}).get("asm")
     if not isinstance(asm, str) or not asm.strip():
-        return {"ok": False, "steps": [], "final_state": {}, "errors": ["Missing input['asm']."]}
+        return {
+            "ok": False,
+            "pedagogy": _pedagogy_meta(student_mode=student_mode),
+            "steps": [],
+            "final_state": {},
+            "errors": ["Missing input['asm']."],
+        }
 
     st = (inp or {}).get("initial_state") or {}
     regs = {k.lower(): int(v) & MASK for k, v in (st.get("regs") or {}).items()}
@@ -172,6 +279,7 @@ def run(inp: Dict[str, Any]) -> Dict[str, Any]:
     regs.setdefault("rbp", 0)
 
     steps: List[Dict[str, Any]] = []
+    scaffolds: List[Dict[str, Any]] = []
     for raw in asm.splitlines():
         line = raw.split("#", 1)[0].split(";", 1)[0].strip()
         if not line or line.endswith(":"):
@@ -181,6 +289,8 @@ def run(inp: Dict[str, Any]) -> Dict[str, Any]:
         mn = parts[0].lower()
         rest = parts[1] if len(parts) > 1 else ""
         ops = [x.strip() for x in rest.split(",")] if rest else []
+
+        scaffolds.append(_scaffold_step(mn, ops, raw))
 
         err = None
         if mn == "mov" and len(ops) == 2:
@@ -214,16 +324,42 @@ def run(inp: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
         if err:
+            if student_mode:
+                student_steps: List[Dict[str, Any]] = []
+                for i, sc in enumerate(scaffolds):
+                    row = {**sc}
+                    if i == len(scaffolds) - 1:
+                        row["error"] = err
+                    student_steps.append(row)
+                return {
+                    "ok": False,
+                    "pedagogy": _pedagogy_meta(student_mode=True),
+                    "steps": student_steps,
+                    "initialization_hints": _input_setup_hints(asm, st),
+                    "final_state": {},
+                    "errors": [err],
+                }
             return {
                 "ok": False,
+                "pedagogy": _pedagogy_meta(student_mode=False),
                 "steps": steps,
                 "walkthrough_table_md": _walkthrough_table_md(steps),
                 "final_state": after,
                 "errors": [err],
             }
 
+    if student_mode:
+        return {
+            "ok": True,
+            "pedagogy": _pedagogy_meta(student_mode=True),
+            "steps": scaffolds,
+            "initialization_hints": _input_setup_hints(asm, st),
+            "errors": [],
+        }
+
     return {
         "ok": True,
+        "pedagogy": _pedagogy_meta(student_mode=False),
         "steps": steps,
         "walkthrough_table_md": _walkthrough_table_md(steps),
         "final_state": {"regs": regs, "mem": mem},
