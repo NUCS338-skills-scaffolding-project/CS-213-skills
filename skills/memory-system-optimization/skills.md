@@ -1,8 +1,8 @@
 ---
-skill_id: "memory-system-optimization"
+skill_id: "mem-opt"
 name: "Memory System Optimization"
 skill_type: "instructional"
-stance: "analytical"
+stance: "socratic"
 tags: ["optimization", "cache", "performance", "cs"]
 course_types: ["cs"]
 learning_goal_tags:

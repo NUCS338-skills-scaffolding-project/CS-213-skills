@@ -1,5 +1,5 @@
 ---
-skill_id: "cache-performance-analysis"
+skill_id: "cache-perf"
 name: "Cache Performance Analysis"
 skill_type: "instructional"
 stance: "socratic"

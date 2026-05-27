@@ -1,5 +1,5 @@
 ---
-skill_id: "cache-optimized-code"
+skill_id: "cache-opt-code"
 name: "Cache Optimized Code"
 skill_type: "code"
 tags: ["cs213", "c", "performance", "memory"]

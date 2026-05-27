@@ -1,7 +1,7 @@
 ---
-skill_id: "conceptual-understanding-check"
+skill_id: "concept-check"
 name: "Conceptual Understanding Check"
-skill_type: "assessment"
+skill_type: "instructional"
 stance: "meta"
 tags: ["understanding", "metacognition", "cs", "memory-systems", "learning"]
 course_types: ["cs"]
@@ -13,7 +13,7 @@ learning_goal_tags:
 trigger_signals:
   - "after-solving-cache-or-memory-problem"
   - "student-requests-explanation-check"
-  - "repeated-errors-in-similar-problems"
+  - "repeated-errors-in-similar-concepts"
   - "uncertain-or-guessing-answers"
 chip_icon: "🧭"
 version: "0.1.0"

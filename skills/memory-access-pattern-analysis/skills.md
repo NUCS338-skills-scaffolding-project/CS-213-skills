@@ -1,5 +1,5 @@
 ---
-skill_id: "memory-access-pattern-analysis"
+skill_id: "mem-access-pattern"
 name: "Memory Access Pattern Analysis"
 skill_type: "instructional"
 stance: "socratic"

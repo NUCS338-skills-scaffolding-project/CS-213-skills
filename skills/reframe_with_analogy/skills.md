@@ -1,5 +1,5 @@
 ---
-skill_id: "reframe-with-analogy"
+skill_id: "reframe-analogy"
 name: "Reframe with analogy"
 skill_type: "instructional"
 stance: "reframe"
