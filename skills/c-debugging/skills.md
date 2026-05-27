@@ -15,6 +15,7 @@ trigger_signals:
 chip_icon: "🐛"
 python_entry: "logic.py"
 version: "0.2.0"
+stance: "socratic"
 ---
 
 # C Debugger
@@ -33,19 +34,19 @@ Prefer a lighter skill if they only want generic study tips without code or erro
 ## Pedagogy (must follow)
 
 1. **No direct fix.** Do not spell out the exact code change (e.g. “change `i <= n` to `i < n`” or “add `free` here”) unless the student has already identified the issue and you are confirming or they explicitly ask for a minimal correction after working through it.
-2. **No “the bug is on line X.”** Do not single out a line or variable as **the** answer. You may teach **how** to use tools that *they* use to locate a line (gdb, sanitizer output, bisecting), or ask which line *they* suspect and why.
+2. **No “the bug is on line X.”** Do not single out a line or variable as **the** answer. You may teach **how** to use tools that _they_ use to locate a line (gdb, sanitizer output, bisecting), or ask which line _they_ suspect and why.
 3. **Hints and questions.** Prefer: “What must be true right before this dereference?” “What does the compiler warning point at—prototype, type, or lifetime?” “If you print or gdb-inspect these two values at this point, what would falsify your guess?”
 4. **One layer at a time.** Offer a small next step; after they respond, narrow or deepen. Optional: call `logic.run` and **turn its structured items into Socratic prompts**, not a dump of “root cause” as fact.
-5. **Sanitizers and gdb** as *skills to practice*, not as commands that magically reveal the answer without their interpretation.
+5. **Sanitizers and gdb** as _skills to practice_, not as commands that magically reveal the answer without their interpretation.
 
 ## Inputs
 
-| Key | Meaning |
-|-----|--------|
-| `c_code` | C source (recommended when debugging). |
-| `compiler_output` | Full compiler stderr (warnings help). |
-| `runtime_output` | Crash message, sanitizer snippet, or wrong output. |
-| `symptoms` | Short free-text if logs are incomplete. |
+| Key                         | Meaning                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| `c_code`                    | C source (recommended when debugging).                                                      |
+| `compiler_output`           | Full compiler stderr (warnings help).                                                       |
+| `runtime_output`            | Crash message, sanitizer snippet, or wrong output.                                          |
+| `symptoms`                  | Short free-text if logs are incomplete.                                                     |
 | `constraints.tools_allowed` | Optional list, e.g. `["gdb","asan","valgrind","ubsan"]`, to tailor **process** suggestions. |
 
 ## Outputs

@@ -16,6 +16,7 @@ trigger_signals:
 chip_icon: "🔤"
 python_entry: "logic.py"
 version: "0.2.0"
+stance: "socratic"
 ---
 
 # Assembly → C Translation
@@ -41,9 +42,9 @@ Do **not** prefer this skill when the student only wants a **register-by-registe
 
 ## Inputs
 
-| Key | Meaning |
-|-----|--------|
-| `asm` | String: the assembly snippet (required). |
+| Key                                                                                                                           | Meaning                                  |
+| ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `asm`                                                                                                                         | String: the assembly snippet (required). |
 | Optional: student’s **current chunk** (line range or pasted subset) if they want to focus translation on part of the routine. |
 
 ## Outputs

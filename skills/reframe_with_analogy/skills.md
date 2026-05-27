@@ -2,7 +2,7 @@
 skill_id: "reframe-with-analogy"
 name: "Reframe with analogy"
 skill_type: "instructional"
-stance: "socratic"
+stance: "reframe"
 tags: ["learning", "concept-explanation", "analogy", "education"]
 course_types: ["cs", "humanities"]
 learning_goal_tags:

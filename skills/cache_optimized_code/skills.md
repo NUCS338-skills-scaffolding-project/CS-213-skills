@@ -17,6 +17,7 @@ trigger_signals:
 chip_icon: "🧠"
 python_entry: "logic.py"
 version: "0.1.0"
+stance: "socratic"
 ---
 
 # Cache Optimized Code

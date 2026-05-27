@@ -16,6 +16,7 @@ trigger_signals:
 chip_icon: "📋"
 python_entry: "logic.py"
 version: "0.2.0"
+stance: "socratic"
 ---
 
 # Execution Trace
@@ -42,11 +43,11 @@ This skill is for **execution / state**, not mapping assembly to C—that is **a
 
 ## Inputs
 
-| Key | Meaning |
-|-----|--------|
-| `asm` | Assembly snippet (required), Intel-style subset as implemented in `logic.py`. |
-| `initial_state` | Optional `{"regs": {...}, "mem": {...}}` — 64-bit values; `rsp` defaults if absent. |
-| `student_mode` | Optional `bool` (default `false`). When `true`, response omits per-step `after` / `delta` / full solution table so the agent does not leak the worked trace; includes light per-step hints instead. |
+| Key             | Meaning                                                                                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `asm`           | Assembly snippet (required), Intel-style subset as implemented in `logic.py`.                                                                                                                       |
+| `initial_state` | Optional `{"regs": {...}, "mem": {...}}` — 64-bit values; `rsp` defaults if absent.                                                                                                                 |
+| `student_mode`  | Optional `bool` (default `false`). When `true`, response omits per-step `after` / `delta` / full solution table so the agent does not leak the worked trace; includes light per-step hints instead. |
 
 ## Outputs
 

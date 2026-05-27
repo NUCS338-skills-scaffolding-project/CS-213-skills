@@ -16,6 +16,7 @@ trigger_signals:
 chip_icon: "📚"
 python_entry: "logic.py"
 version: "0.2.0"
+stance: "socratic"
 ---
 
 # Stack Visualizer
@@ -47,16 +48,16 @@ Do **not** prefer this skill when the student only wants a **non-stack execution
 
 ## Inputs
 
-| Key | Meaning |
-|-----|--------|
-| `asm` | Optional. If non-empty, runs **timeline** mode (Intel-style subset in `logic.py`). |
-| `regs` / `mem` | Top-level register map and memory map **or** nested under `initial_state`. |
-| `regs.rsp` | **Required** for timeline mode and for snapshot mode. |
-| `regs.rbp` | Optional; enables **offset-from-rbp** labeling when `rbp` lies above `rsp` in the modeled window. |
-| `mem` | Optional address → qword values for stack (and other) cells. |
-| `label_hints` | Optional `addr → label` overrides for the table. |
-| `word_size`, `max_slots`, `max_steps` | Optional tuning (defaults 8, 16–32, 200). |
-| `student_mode` | Optional `bool`. When `true`, omits numeric solution traces (see Outputs). |
+| Key                                   | Meaning                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `asm`                                 | Optional. If non-empty, runs **timeline** mode (Intel-style subset in `logic.py`).                |
+| `regs` / `mem`                        | Top-level register map and memory map **or** nested under `initial_state`.                        |
+| `regs.rsp`                            | **Required** for timeline mode and for snapshot mode.                                             |
+| `regs.rbp`                            | Optional; enables **offset-from-rbp** labeling when `rbp` lies above `rsp` in the modeled window. |
+| `mem`                                 | Optional address → qword values for stack (and other) cells.                                      |
+| `label_hints`                         | Optional `addr → label` overrides for the table.                                                  |
+| `word_size`, `max_slots`, `max_steps` | Optional tuning (defaults 8, 16–32, 200).                                                         |
+| `student_mode`                        | Optional `bool`. When `true`, omits numeric solution traces (see Outputs).                        |
 
 ## Outputs
 

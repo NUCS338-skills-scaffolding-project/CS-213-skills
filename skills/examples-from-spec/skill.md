@@ -1,8 +1,8 @@
 ---
 skill_id: "examples-from-spec"
-name: "Build Examples from Spec"
+name: "examples-from-spec"
 skill_type: "instructional"
-stance: "socratic"
+stance: "reframe"
 tags: ["specification", "examples", "cs213"]
 course_types: ["cs"]
 learning_goal_tags:
@@ -12,7 +12,8 @@ trigger_signals:
   - "student-has-spec-but-no-examples"
   - "function-signature-given"
 chip_icon: "🧪"
-version: "0.1.0"
+python_entry: "logic.py"
+version: "0.2.0"
 ---
 
 # Build Examples from Spec
