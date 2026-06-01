@@ -168,7 +168,7 @@ What the tutor must NEVER do.
 
 ```yaml
 ---
-skill_id: "c-debugger"               # ≤ 18 chars, kebab-case
+skill_id: "cs213-c-debugger"          # kebab-case; must be globally unique
 name: "C Debugger"                   # human-readable, no trailing "Skill"
 skill_type: "code"
 tags: ["cs343", "c", "coding"]
@@ -300,7 +300,7 @@ Before pushing your changes, make sure:
 
 - [ ] Your `skills.md` has the full YAML header at the very top
 - [ ] `skill_type` is exactly `instructional` or `code`
-- [ ] `skill_id` matches your folder name, is kebab-case, and is ≤ 18 chars
+- [ ] `skill_id` matches your folder name, is kebab-case, and is **globally unique** (avoid short ids like `cache-perf`)
 - [ ] `name` is clean and does **not** end with `"Skill"`
 - [ ] **NEW** — `course_types` is set (subset of `["cs", "humanities"]`)
 - [ ] **NEW** — `learning_goal_tags` has at least one tag from the controlled vocab
@@ -309,6 +309,32 @@ Before pushing your changes, make sure:
 - [ ] **(code only)** — your Python code runs without errors locally
 - [ ] Tags are relevant and descriptive
 - [ ] If your instructional skill has no executable logic, you've **omitted** `logic.py` (don't ship empty stubs)
+
+### Local Testing (no sync required)
+
+You can test skills locally before any sync/catalog refresh by pointing the orchestrator at your team repo and rebuilding the catalog.
+
+- **Set orchestrator `.env`**
+
+```bash
+MENTORA_SKILLS_PATH=../your-team-repo/skills
+REGISTRY_URL=../skills-registry/catalog.json
+REGISTRY_CACHE_TTL=0
+```
+
+- **Rebuild the catalog from local repos**
+
+```bash
+python skills-registry/scripts/catalog_builder.py --local .. --output skills-registry/catalog.json
+```
+
+- **Debug skill selection**
+
+After you’ve sent a few turns in a session:
+
+```bash
+curl -s http://localhost:8080/sessions/{session-id}/debug | jq
+```
 
 ---
 

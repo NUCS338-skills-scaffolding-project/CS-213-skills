@@ -240,10 +240,10 @@ def build_skill_notes(user_message: str) -> str:
         "- Prefer short, step-by-step guidance when asked.\n"
     )
 
-    run_c = _load_run("c_debugging")
-    run_asm = _load_run("assembly_translation")
-    run_trace = _load_run("execution_trace")
-    run_stack = _load_run("stack_visualizer")
+    run_c = _load_run("c-debugger")
+    run_asm = _load_run("asm-translation")
+    run_trace = _load_run("execution-trace")
+    run_stack = _load_run("stack-visualizer")
 
     if looks_like_c(snippet):
         r = run_c(

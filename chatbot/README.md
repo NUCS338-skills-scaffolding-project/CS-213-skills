@@ -1,6 +1,6 @@
 # CS-213 skills chatbot
 
-Small web UI: your message goes to **Google Gemini**, with optional hints from the local skills (`c_debugging`, `assembly_translation`, `execution_trace`, `stack_visualizer`) when the text looks like C or assembly.
+Small web UI: your message goes to **Google Gemini**, with optional hints from the local skills (`c-debugger`, `asm-translation`, `execution-trace`, `stack-visualizer`) when the text looks like C or assembly.
 
 ## Run
 
